@@ -1,4 +1,3 @@
-
 import React, { Component, useState, useEffect, useRef, useCallback, ErrorInfo, ReactNode } from 'react';
 import { AppStatus, GameState, Phrase, PronunciationResult, TOPICS, AppMode, UserProfile, USER_RANKS, ChatMessage } from './types';
 import { generatePhrases, validatePronunciation, generateSpeech, generateWords, processConversationTurn } from './services/geminiService';
@@ -81,7 +80,8 @@ const AppContent: React.FC<AppContentProps> = ({ currentUser, onLogout, onUpdate
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const [translationModalContent, setTranslationModalContent] = useState<string | null>(null);
   
-  const [showProfileSetup, setShowProfileSetup] = useState(false);
+  // Initialize profile setup true if name is empty (new user)
+  const [showProfileSetup, setShowProfileSetup] = useState(currentUser.name === '');
   
   // Settings
   const [sfxEnabled, setSfxEnabled] = useState(true);
@@ -103,6 +103,7 @@ const AppContent: React.FC<AppContentProps> = ({ currentUser, onLogout, onUpdate
   const userAudioRef = useRef<HTMLAudioElement | null>(null);
   const audioCacheRef = useRef<Map<string, AudioBuffer>>(new Map());
   const recorderRef = useRef<AudioRecorderRef>(null);
+  const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null); // To prevent GC of TTS object
   
   const activeRequestIdRef = useRef<number>(0);
 
@@ -186,6 +187,9 @@ const AppContent: React.FC<AppContentProps> = ({ currentUser, onLogout, onUpdate
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
     }
+    if (utteranceRef.current) {
+        utteranceRef.current = null;
+    }
     setIsAvatarSpeaking(false);
     setIsGeneratingAudio(false);
 
@@ -243,14 +247,16 @@ const AppContent: React.FC<AppContentProps> = ({ currentUser, onLogout, onUpdate
         setStatus(AppStatus.READY);
 
       } else if (appMode === 'practice') {
-        const newPhrases = await generatePhrases(selectedTopic, selectedDifficulty, 5);
+        // Now fetches 12 phrases (cached) instead of 5
+        const newPhrases = await generatePhrases(selectedTopic, selectedDifficulty, 12);
         if (activeRequestIdRef.current !== requestId) return;
         setPhrases(newPhrases);
         setCurrentPhraseIndex(0);
         setStatus(AppStatus.READY);
 
       } else if (appMode === 'words') {
-        const newWords = await generateWords(selectedTopic, selectedDifficulty, 5);
+        // Now fetches 12 words (cached) instead of 5
+        const newWords = await generateWords(selectedTopic, selectedDifficulty, 12);
         if (activeRequestIdRef.current !== requestId) return;
         setPhrases(newWords);
         setCurrentPhraseIndex(0);
@@ -334,99 +340,54 @@ const AppContent: React.FC<AppContentProps> = ({ currentUser, onLogout, onUpdate
           osc.stop(startTime + 0.4);
         });
       }
+      // Clean up SFX context after playing
+      setTimeout(() => {
+        if (ctx.state !== 'closed') ctx.close();
+      }, 1000);
     } catch (e) { console.error("Error playing SFX", e); }
   }, [sfxEnabled]);
-
-  const base64ToUint8Array = (base64String: string): Uint8Array => {
-    const binaryString = window.atob(base64String);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
-    return bytes;
-  };
-
-  const decodePCM = (data: Uint8Array, ctx: AudioContext, sampleRate: number = 24000): AudioBuffer => {
-    const dataInt16 = new Int16Array(data.buffer);
-    const numChannels = 1;
-    const frameCount = dataInt16.length / numChannels;
-    const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
-    for (let channel = 0; channel < numChannels; channel++) {
-      const channelData = buffer.getChannelData(channel);
-      for (let i = 0; i < frameCount; i++) {
-        channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
-      }
-    }
-    return buffer;
-  }
 
   const speakText = useCallback(async (text: string) => {
     if (isGeneratingAudio || !text) return; 
     stopAllAudio(); 
-    setIsGeneratingAudio(true);
-    setIsAvatarSpeaking(true);
-    if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
-      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-      audioContextRef.current = new AudioContextClass({ sampleRate: 24000 });
-    }
-    const ctx = audioContextRef.current;
-    const playAudioBuffer = async (buffer: AudioBuffer) => {
-      try {
-        if (ctx.state === 'suspended') await ctx.resume();
-        const analyser = ctx.createAnalyser();
-        analyser.fftSize = 512; 
-        analyser.smoothingTimeConstant = 0.5;
-        setAudioAnalyser(analyser);
-        const source = ctx.createBufferSource();
-        source.buffer = buffer;
-        source.connect(analyser);
-        analyser.connect(ctx.destination);
-        sourceNodeRef.current = source;
-        source.onended = () => { setIsAvatarSpeaking(false); setIsGeneratingAudio(false); };
-        source.start(0);
-      } catch (err) {
-        console.error("Audio Playback Error:", err);
-        setIsAvatarSpeaking(false);
-        setIsGeneratingAudio(false);
-      }
-    };
-    const playBrowserTTS = () => {
-      try {
-        if ('speechSynthesis' in window) {
-           const utterance = new SpeechSynthesisUtterance(text);
-           utterance.lang = 'en-US';
-           utterance.rate = 0.9;
-           utterance.onstart = () => { setAudioAnalyser(null); };
-           const handleEnd = () => { setIsAvatarSpeaking(false); setIsGeneratingAudio(false); };
-           utterance.onend = handleEnd;
-           utterance.onerror = (e) => { console.error("Browser TTS error:", e); handleEnd(); };
-           window.speechSynthesis.speak(utterance);
-        } else { throw new Error("Browser does not support TTS"); }
-      } catch (fallbackError) {
-        console.error("All TTS methods failed", fallbackError);
-        setIsAvatarSpeaking(false);
-        setIsGeneratingAudio(false);
-        alert("Não foi possível reproduzir o áudio.");
-      }
-    };
-    if (audioCacheRef.current.has(text)) {
-      await playAudioBuffer(audioCacheRef.current.get(text)!);
-      return;
-    }
+    
+    // 3. STRATEGY: Native TTS Only (Save API Cost)
     try {
-      const timeoutPromise = new Promise<string | null>((_, reject) => {
-        setTimeout(() => reject(new Error("Timeout")), 60000); 
-      });
-      const audioBase64 = await Promise.race([ generateSpeech(text), timeoutPromise ]);
-      if (audioBase64) {
-        const audioBytes = base64ToUint8Array(audioBase64);
-        const audioBuffer = decodePCM(audioBytes, ctx);
-        audioCacheRef.current.set(text, audioBuffer);
-        await playAudioBuffer(audioBuffer);
-      } else { playBrowserTTS(); }
-    } catch (error) {
-      console.warn("Gemini TTS timed out or failed, using browser fallback.", error);
-      playBrowserTTS();
+      if ('speechSynthesis' in window) {
+          setIsAvatarSpeaking(true);
+          const utterance = new SpeechSynthesisUtterance(text);
+          utteranceRef.current = utterance; // Keep reference to prevent garbage collection
+          
+          utterance.lang = 'en-US';
+          utterance.rate = 0.9;
+          
+          utterance.onstart = () => { setAudioAnalyser(null); }; 
+          
+          const handleEnd = () => { 
+              setIsAvatarSpeaking(false); 
+              setIsGeneratingAudio(false); 
+              utteranceRef.current = null;
+          };
+          
+          utterance.onend = handleEnd;
+          
+          utterance.onerror = (e) => { 
+             // Ignore interruption errors (when user clicks quickly)
+             if (e.error === 'interrupted' || e.error === 'canceled') {
+                 setIsAvatarSpeaking(false);
+                 return;
+             }
+             console.error("Browser TTS error:", e.error); 
+             handleEnd(); 
+          };
+          
+          window.speechSynthesis.speak(utterance);
+      } else { 
+          alert("Seu navegador não suporta áudio nativo.");
+      }
+    } catch (fallbackError) {
+      console.error("TTS failed", fallbackError);
+      setIsAvatarSpeaking(false);
     }
   }, [isGeneratingAudio, stopAllAudio]);
 
@@ -735,7 +696,7 @@ const AppContent: React.FC<AppContentProps> = ({ currentUser, onLogout, onUpdate
             )}
 
             {status !== AppStatus.LOADING_PHRASES && status !== AppStatus.ERROR && (
-            <div className="flex flex-col items-center w-full max-w-sm mx-auto h-full">
+            <div className="flex flex-col items-center w-full max-w-sm mx-auto h-full relative">
                 
                 {/* 3D Avatar Area - Compact Landscape Container */}
                 <div className="w-full h-32 relative mb-4 flex justify-center items-center z-0 shrink-0">
@@ -825,11 +786,25 @@ const AppContent: React.FC<AppContentProps> = ({ currentUser, onLogout, onUpdate
                 ) : (
                    // --- STANDARD CARD VIEW ---
                    phrases.length > 0 && (
-                        <PhraseCard 
-                            phrase={phrases[currentPhraseIndex]} 
-                            onSpeak={() => speakText(phrases[currentPhraseIndex]?.english)}
-                            isSpeaking={isAvatarSpeaking || isGeneratingAudio}
-                        />
+                        <div className="w-full flex flex-col items-center pb-10">
+                            <PhraseCard 
+                                phrase={phrases[currentPhraseIndex]} 
+                                onSpeak={() => speakText(phrases[currentPhraseIndex]?.english)}
+                                isSpeaking={isAvatarSpeaking || isGeneratingAudio}
+                            />
+                            
+                            {/* IN-FLOW RECORDER FOR CARD MODE - CLOSER TO CONTENT */}
+                            {status !== AppStatus.FEEDBACK && (
+                                <div className="mt-4 pointer-events-auto z-10">
+                                    <AudioRecorder 
+                                        ref={recorderRef} 
+                                        onAudioRecorded={handleAudioRecorded} 
+                                        isProcessing={status === AppStatus.PROCESSING_AUDIO} 
+                                        disabled={status !== AppStatus.READY || isAvatarSpeaking || isGeneratingAudio} 
+                                    />
+                                </div>
+                            )}
+                        </div>
                    )
                 )}
 
@@ -891,8 +866,8 @@ const AppContent: React.FC<AppContentProps> = ({ currentUser, onLogout, onUpdate
            </div>
         )}
 
-        {/* Fixed Bottom Recorder Area */}
-        {status !== AppStatus.LOADING_PHRASES && status !== AppStatus.ERROR && (phrases.length > 0 || appMode === 'conversation') && status !== AppStatus.FEEDBACK && (
+        {/* Fixed Bottom Recorder Area - ONLY FOR CONVERSATION NOW */}
+        {status !== AppStatus.LOADING_PHRASES && status !== AppStatus.ERROR && appMode === 'conversation' && status !== AppStatus.FEEDBACK && (
             <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-white via-white to-transparent pt-12 pb-6 px-4 flex justify-center z-10 pointer-events-none">
                 <div className="pointer-events-auto">
                      <AudioRecorder ref={recorderRef} onAudioRecorded={handleAudioRecorded} isProcessing={status === AppStatus.PROCESSING_AUDIO} disabled={status !== AppStatus.READY || isAvatarSpeaking || isGeneratingAudio} />
@@ -907,97 +882,94 @@ const AppContent: React.FC<AppContentProps> = ({ currentUser, onLogout, onUpdate
 };
 
 const App: React.FC = () => {
-  const [users, setUsers] = useState<UserProfile[]>(() => {
-    try {
-      const saved = localStorage.getItem(USERS_KEY);
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
-
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
-  const [isCreatingNew, setIsCreatingNew] = useState(false);
+  const [users, setUsers] = useState<UserProfile[]>([]);
+  const [view, setView] = useState<'login' | 'app' | 'admin'>('login');
 
+  // Load users from localStorage
   useEffect(() => {
-    localStorage.setItem(USERS_KEY, JSON.stringify(users));
-  }, [users]);
+    try {
+      const stored = localStorage.getItem(USERS_KEY);
+      if (stored) {
+        setUsers(JSON.parse(stored));
+      }
+    } catch (e) {
+      console.error("Failed to load users", e);
+    }
+  }, []);
 
   const handleLogin = (user: UserProfile) => {
     setCurrentUser(user);
+    setView(user.role === 'admin' ? 'admin' : 'app');
+  };
+
+  const handleCreateNew = () => {
+    const newUser: UserProfile = {
+      id: `user_${Date.now()}`,
+      name: '',
+      avatarColor: 'bg-indigo-500',
+      joinedDate: Date.now(),
+      role: 'user'
+    };
+    setCurrentUser(newUser);
+    setView('app');
   };
 
   const handleLogout = () => {
     setCurrentUser(null);
-  };
-
-  const handleCreateNew = () => {
-    setIsCreatingNew(true);
-  };
-
-  const handleSaveProfile = (profileData: Omit<UserProfile, 'id' | 'role'>) => {
-    const newUser: UserProfile = {
-      ...profileData,
-      id: `user_${Date.now()}`,
-      role: 'user'
-    };
-    setUsers(prev => [...prev, newUser]);
-    setCurrentUser(newUser);
-    setIsCreatingNew(false);
+    setView('login');
   };
 
   const handleUpdateUser = (updatedUser: UserProfile) => {
-    setUsers(prev => {
-      const index = prev.findIndex(u => u.id === updatedUser.id);
-      if (index >= 0) {
-        const newUsers = [...prev];
-        newUsers[index] = updatedUser;
-        return newUsers;
-      } else {
-        // If user was guest and is now saving
-        return [...prev, updatedUser];
-      }
-    });
     setCurrentUser(updatedUser);
+    
+    // Update users list
+    setUsers(prev => {
+      // If user exists, update it
+      if (prev.some(u => u.id === updatedUser.id)) {
+        const newUsers = prev.map(u => u.id === updatedUser.id ? updatedUser : u);
+        localStorage.setItem(USERS_KEY, JSON.stringify(newUsers));
+        return newUsers;
+      }
+      // If it's a new user (and not guest/admin being persisted for first time)
+      if (updatedUser.role === 'user') {
+        const newUsers = [...prev, updatedUser];
+        localStorage.setItem(USERS_KEY, JSON.stringify(newUsers));
+        return newUsers;
+      }
+      return prev;
+    });
   };
 
   const handleDeleteUser = (userId: string) => {
-    setUsers(prev => prev.filter(u => u.id !== userId));
+    setUsers(prev => {
+      const newUsers = prev.filter(u => u.id !== userId);
+      localStorage.setItem(USERS_KEY, JSON.stringify(newUsers));
+      return newUsers;
+    });
     localStorage.removeItem(`fluentflow_progress_${userId}`);
   };
 
-  if (!currentUser) {
-    if (isCreatingNew) {
-      return (
-        <ProfileSetup 
-          onSave={handleSaveProfile} 
-          onCancel={() => setIsCreatingNew(false)}
-          existingNames={users.map(u => u.name)}
-        />
-      );
-    }
+  if (view === 'admin') {
     return (
-      <LoginScreen 
-        users={users} 
-        onLogin={handleLogin} 
-        onCreateNew={handleCreateNew} 
-      />
+      <ErrorBoundary>
+        <AdminDashboard users={users} onDeleteUser={handleDeleteUser} onLogout={handleLogout} />
+      </ErrorBoundary>
     );
   }
 
-  if (currentUser.role === 'admin') {
+  if (!currentUser || view === 'login') {
     return (
-      <AdminDashboard 
-        users={users} 
-        onDeleteUser={handleDeleteUser} 
-        onLogout={handleLogout} 
-      />
+      <ErrorBoundary>
+        <LoginScreen users={users} onLogin={handleLogin} onCreateNew={handleCreateNew} />
+      </ErrorBoundary>
     );
   }
 
   return (
     <ErrorBoundary>
       <AppContent 
+        key={currentUser.id}
         currentUser={currentUser} 
         onLogout={handleLogout} 
         onUpdateUser={handleUpdateUser} 

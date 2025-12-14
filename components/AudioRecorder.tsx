@@ -94,7 +94,7 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(({
   }, []);
 
   return (
-    <div className="flex flex-col items-center justify-center py-6 gap-3">
+    <div className="flex flex-col items-center justify-center py-4 gap-3">
       {/* The Button - Hero */}
       <button
         onClick={toggleRecording}

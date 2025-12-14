@@ -6,6 +6,7 @@ const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 const modelName = 'gemini-2.5-flash';
 const ttsModelName = 'gemini-2.5-flash-preview-tts';
+const CACHE_PREFIX = 'fluentflow_cache_';
 
 // --- PROMPTS ---
 
@@ -222,7 +223,20 @@ const validationSchema: Schema = {
   required: ['isCorrect', 'score', 'feedback', 'words']
 };
 
-export const generatePhrases = async (topic: string, difficulty: 'easy' | 'medium' | 'hard', count: number = 5): Promise<Phrase[]> => {
+export const generatePhrases = async (topic: string, difficulty: 'easy' | 'medium' | 'hard', count: number = 12): Promise<Phrase[]> => {
+  // 1. STRATEGY: Caching - Check local storage first
+  const cacheKey = `${CACHE_PREFIX}phrases_${topic}_${difficulty}`;
+  try {
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+              console.log("Using cached phrases for", topic);
+              return parsed;
+          }
+      }
+  } catch (e) { console.warn("Cache read error", e); }
+
   try {
     const difficultyGuide = {
       easy: "CEFR Level A1-A2. Simple sentences, high frequency words.",
@@ -230,6 +244,7 @@ export const generatePhrases = async (topic: string, difficulty: 'easy' | 'mediu
       hard: "CEFR Level C1-C2. Idioms, advanced grammar, fast speech."
     };
 
+    // 2. STRATEGY: Batching - Increased count to 12
     const apiCall = ai.models.generateContent({
       model: modelName,
       contents: `Generate ${count} distinct, conversationally natural phrases for the topic: "${topic}".
@@ -246,22 +261,26 @@ export const generatePhrases = async (topic: string, difficulty: 'easy' | 'mediu
       },
     });
 
-    // Increased timeout to 30s
     const response = await withTimeout<GenerateContentResponse>(apiCall, 30000);
-
     const data = JSON.parse(response.text || '{"phrases": []}');
     
     if (!data.phrases || data.phrases.length === 0) {
       throw new Error("Empty phrases returned");
     }
 
-    return data.phrases.map((p: any, index: number) => ({
+    const phrases = data.phrases.map((p: any, index: number) => ({
       ...p,
       id: `${topic}-${difficulty}-${Date.now()}-${index}`
     }));
+
+    // Save to Cache
+    try {
+        localStorage.setItem(cacheKey, JSON.stringify(phrases));
+    } catch(e) { console.warn("Cache write error", e); }
+
+    return phrases;
   } catch (error) {
     console.error("Error generating phrases (Using Fallback):", error);
-    // Return fallback data so the app doesn't break
     return FALLBACK_PHRASES.map((p, i) => ({
         ...p, 
         id: `fallback-${Date.now()}-${i}`,
@@ -270,7 +289,20 @@ export const generatePhrases = async (topic: string, difficulty: 'easy' | 'mediu
   }
 };
 
-export const generateWords = async (topic: string, difficulty: 'easy' | 'medium' | 'hard', count: number = 5): Promise<Phrase[]> => {
+export const generateWords = async (topic: string, difficulty: 'easy' | 'medium' | 'hard', count: number = 12): Promise<Phrase[]> => {
+  // 1. STRATEGY: Caching
+  const cacheKey = `${CACHE_PREFIX}words_${topic}_${difficulty}`;
+  try {
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+              console.log("Using cached words for", topic);
+              return parsed;
+          }
+      }
+  } catch (e) { console.warn("Cache read error", e); }
+
   try {
     const apiCall = ai.models.generateContent({
       model: modelName,
@@ -288,22 +320,26 @@ export const generateWords = async (topic: string, difficulty: 'easy' | 'medium'
       },
     });
 
-    // Increased timeout to 30s
     const response = await withTimeout<GenerateContentResponse>(apiCall, 30000);
-
     const data = JSON.parse(response.text || '{"words": []}');
     
     if (!data.words || data.words.length === 0) {
         throw new Error("Empty words returned");
     }
 
-    return data.words.map((w: any, index: number) => ({
+    const words = data.words.map((w: any, index: number) => ({
       ...w,
       id: `word-${Date.now()}-${index}`
     }));
+
+    // Save to Cache
+    try {
+        localStorage.setItem(cacheKey, JSON.stringify(words));
+    } catch(e) { console.warn("Cache write error", e); }
+
+    return words;
   } catch (error) {
     console.error("Error generating words (Using Fallback):", error);
-    // Return fallback data so the app doesn't break
     return FALLBACK_WORDS.map((w, i) => ({
         ...w, 
         id: `fallback-word-${Date.now()}-${i}`,
