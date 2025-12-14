@@ -1,7 +1,7 @@
 
 import React, { Component, useState, useEffect, useRef, useCallback, ErrorInfo, ReactNode } from 'react';
-import { AppStatus, GameState, Phrase, PronunciationResult, TOPICS, AppMode, UserProfile, USER_RANKS } from './types';
-import { generatePhrases, validatePronunciation, generateSpeech, generateWords } from './services/geminiService';
+import { AppStatus, GameState, Phrase, PronunciationResult, TOPICS, AppMode, UserProfile, USER_RANKS, ChatMessage } from './types';
+import { generatePhrases, validatePronunciation, generateSpeech, generateWords, processConversationTurn } from './services/geminiService';
 import { getCoursePhrases, getRandomPhrases } from './phrases';
 import { PhraseCard } from './components/PhraseCard';
 import { AudioRecorder, AudioRecorderRef } from './components/AudioRecorder';
@@ -10,7 +10,7 @@ import { Avatar3D } from './components/Avatar3D';
 import { ProfileSetup } from './components/ProfileSetup';
 import { LoginScreen } from './components/LoginScreen';
 import { AdminDashboard } from './components/AdminDashboard';
-import { BookOpen, RefreshCw, CheckCircle, XCircle, ArrowRight, Volume2, BarChart, Loader2, Zap, Settings, GraduationCap, Sparkles, Play, Music, Type as TypeIcon, Video, VideoOff, User, Crown, Edit2, LogOut, AlertTriangle, Save, Shuffle } from 'lucide-react';
+import { BookOpen, RefreshCw, CheckCircle, XCircle, ArrowRight, Volume2, BarChart, Loader2, Zap, Settings, GraduationCap, Sparkles, Play, Music, Type as TypeIcon, Video, VideoOff, User, Crown, Edit2, LogOut, AlertTriangle, Save, MessageCircle, X, Languages } from 'lucide-react';
 
 const USERS_KEY = 'fluentflow_users';
 
@@ -76,12 +76,21 @@ const AppContent: React.FC<AppContentProps> = ({ currentUser, onLogout, onUpdate
   const [appMode, setAppMode] = useState<AppMode>('course');
   const [userAudioUrl, setUserAudioUrl] = useState<string | null>(null);
   
+  // Chat State
+  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
+  const [translationModalContent, setTranslationModalContent] = useState<string | null>(null);
+  
   const [showProfileSetup, setShowProfileSetup] = useState(false);
   
   // Settings
   const [sfxEnabled, setSfxEnabled] = useState(true);
   const [disableHeadMotion, setDisableHeadMotion] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  
+  // Settings Menu Refs for Click Outside detection
+  const settingsRef = useRef<HTMLDivElement>(null);
+  const settingsBtnRef = useRef<HTMLButtonElement>(null);
 
   // Audio State
   const [isAvatarSpeaking, setIsAvatarSpeaking] = useState(false);
@@ -128,6 +137,26 @@ const AppContent: React.FC<AppContentProps> = ({ currentUser, onLogout, onUpdate
   const [selectedTopic, setSelectedTopic] = useState<string>(TOPICS[0]);
   const [selectedDifficulty, setSelectedDifficulty] = useState<'easy' | 'medium' | 'hard'>('easy');
 
+  // Handle click outside settings menu
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (
+        showSettings &&
+        settingsRef.current &&
+        !settingsRef.current.contains(event.target as Node) &&
+        settingsBtnRef.current &&
+        !settingsBtnRef.current.contains(event.target as Node)
+      ) {
+        setShowSettings(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [showSettings]);
+
   // Save Game State Changes
   useEffect(() => {
     // We now SAVE progress even for guests temporarily, so if they convert, it's there.
@@ -141,6 +170,13 @@ const AppContent: React.FC<AppContentProps> = ({ currentUser, onLogout, onUpdate
   useEffect(() => {
     audioCacheRef.current.clear();
   }, [selectedTopic, appMode]);
+
+  // Auto-scroll chat to bottom
+  useEffect(() => {
+    if (appMode === 'conversation' && chatContainerRef.current) {
+        chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+    }
+  }, [chatHistory, appMode]);
 
   const stopAllAudio = useCallback(() => {
     if (sourceNodeRef.current) {
@@ -220,12 +256,17 @@ const AppContent: React.FC<AppContentProps> = ({ currentUser, onLogout, onUpdate
         setCurrentPhraseIndex(0);
         setStatus(AppStatus.READY);
 
-      } else if (appMode === 'random') {
-        // New Random Mode: Get 5 random phrases from the entire library
-        const randomPhrases = getRandomPhrases(5);
-        if (activeRequestIdRef.current !== requestId) return;
-        setPhrases(randomPhrases);
-        setCurrentPhraseIndex(0);
+      } else if (appMode === 'conversation') {
+        // Initialize Conversation Mode
+        if (chatHistory.length === 0) {
+             setChatHistory([
+                 { 
+                     role: 'model', 
+                     text: "Hello! I'm your English conversation tutor. What would you like to talk about today?",
+                     translation: "Olá! Sou seu tutor de conversação em inglês. Sobre o que você gostaria de conversar hoje?"
+                 }
+             ]);
+        }
         setStatus(AppStatus.READY);
       }
     } catch (error) {
@@ -233,7 +274,7 @@ const AppContent: React.FC<AppContentProps> = ({ currentUser, onLogout, onUpdate
       console.error(error);
       setStatus(AppStatus.ERROR);
     }
-  }, [appMode, gameState.courseProgressIndex, selectedTopic, selectedDifficulty, stopAllAudio]);
+  }, [appMode, gameState.courseProgressIndex, selectedTopic, selectedDifficulty, stopAllAudio, chatHistory.length]);
 
   useEffect(() => {
     loadContent();
@@ -417,8 +458,8 @@ const AppContent: React.FC<AppContentProps> = ({ currentUser, onLogout, onUpdate
         loadContent();
       } else if (appMode === 'words') {
         loadContent();
-      } else if (appMode === 'random') {
-        loadContent(); // Just fetch more random phrases
+      } else if (appMode === 'conversation') {
+        // Not used in conversation mode
       }
     }
   }, [currentPhraseIndex, phrases.length, appMode, gameState.courseProgressIndex, loadContent, stopAllAudio]);
@@ -434,6 +475,34 @@ const AppContent: React.FC<AppContentProps> = ({ currentUser, onLogout, onUpdate
     stopAllAudio();
     setStatus(AppStatus.PROCESSING_AUDIO);
     setUserAudioUrl(audioUrl);
+
+    // --- CONVERSATION MODE LOGIC ---
+    if (appMode === 'conversation') {
+        const turnResult = await processConversationTurn(base64, mimeType, chatHistory);
+        
+        // Add User's Turn
+        const newHistory: ChatMessage[] = [
+            ...chatHistory,
+            { role: 'user', text: turnResult.transcription },
+            { 
+                role: 'model', 
+                text: turnResult.response, 
+                feedback: turnResult.feedback,
+                translation: turnResult.translation 
+            }
+        ];
+        
+        setChatHistory(newHistory);
+        setStatus(AppStatus.READY);
+        
+        // Play AI Response
+        if (turnResult.response) {
+            speakText(turnResult.response);
+        }
+        return;
+    }
+
+    // --- STANDARD MODES LOGIC (Course, Practice, Words) ---
     const currentPhrase = phrases[currentPhraseIndex];
     if (!currentPhrase) return;
     const validation = await validatePronunciation(base64, mimeType, currentPhrase.english, currentPhrase.difficulty);
@@ -467,6 +536,7 @@ const AppContent: React.FC<AppContentProps> = ({ currentUser, onLogout, onUpdate
     if (window.confirm("Isso irá resetar todo seu progresso e voltar ao início. Tem certeza?")) {
       const newState = { score: 0, streak: 0, currentLevel: 1, phrasesCompleted: 0, courseProgressIndex: 0 };
       setGameState(newState);
+      setChatHistory([]);
       if (currentUser.role !== 'guest') {
         localStorage.setItem(storageKey, JSON.stringify(newState));
       }
@@ -488,6 +558,25 @@ const AppContent: React.FC<AppContentProps> = ({ currentUser, onLogout, onUpdate
           onSave={saveProfile} 
           onCancel={() => setShowProfileSetup(false)} 
         />
+      )}
+
+      {/* --- TRANSLATION POPUP MODAL --- */}
+      {translationModalContent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4 animate-fade-in-up">
+            <div className="bg-white p-6 rounded-2xl shadow-2xl w-full max-w-xs relative flex flex-col gap-3 text-center">
+                 <button onClick={() => setTranslationModalContent(null)} className="absolute top-2 right-2 text-gray-400 hover:text-gray-600 bg-gray-50 p-1.5 rounded-full">
+                     <X className="w-4 h-4" />
+                 </button>
+                 <div className="flex justify-center mb-1">
+                     <div className="bg-indigo-100 p-2 rounded-full text-indigo-600">
+                         <Languages className="w-6 h-6" />
+                     </div>
+                 </div>
+                 <h3 className="font-bold text-gray-800">Tradução</h3>
+                 <p className="text-gray-600 italic font-medium leading-relaxed">"{translationModalContent}"</p>
+                 <button onClick={() => setTranslationModalContent(null)} className="mt-2 w-full py-2 bg-indigo-600 text-white rounded-lg font-bold text-sm">Fechar</button>
+            </div>
+        </div>
       )}
 
       {/* GUEST BANNER */}
@@ -547,8 +636,8 @@ const AppContent: React.FC<AppContentProps> = ({ currentUser, onLogout, onUpdate
                <button onClick={() => setAppMode('words')} className={`flex-1 flex items-center justify-center px-2 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${appMode === 'words' ? 'bg-white text-indigo-700 shadow-sm border border-gray-200' : 'text-gray-500 hover:text-gray-700'}`}>
                 <TypeIcon className="w-3 h-3 mr-1.5" /> Palavras
               </button>
-              <button onClick={() => setAppMode('random')} className={`flex-1 flex items-center justify-center px-2 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${appMode === 'random' ? 'bg-white text-indigo-700 shadow-sm border border-gray-200' : 'text-gray-500 hover:text-gray-700'}`}>
-                <Shuffle className="w-3 h-3 mr-1.5" /> Mix
+              <button onClick={() => setAppMode('conversation')} className={`flex-1 flex items-center justify-center px-2 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${appMode === 'conversation' ? 'bg-white text-indigo-700 shadow-sm border border-gray-200' : 'text-gray-500 hover:text-gray-700'}`}>
+                <MessageCircle className="w-3 h-3 mr-1.5" /> Conversar
               </button>
             </div>
 
@@ -574,15 +663,16 @@ const AppContent: React.FC<AppContentProps> = ({ currentUser, onLogout, onUpdate
                     </div>
                 )}
                 
-                {/* Visual indicator for Random Mode */}
-                {appMode === 'random' && (
-                   <div className="flex items-center gap-2 text-xs font-bold bg-purple-50 text-purple-700 px-3 py-1 rounded-full border border-purple-100">
-                    <Shuffle className="w-3 h-3" />
-                    <span>Modo Aleatório</span>
+                {/* Visual indicator for Conversation Mode */}
+                {appMode === 'conversation' && (
+                   <div className="flex items-center gap-2 text-xs font-bold bg-green-50 text-green-700 px-3 py-1 rounded-full border border-green-100">
+                    <MessageCircle className="w-3 h-3" />
+                    <span>Role Play</span>
                   </div>
                 )}
 
                 <button 
+                  ref={settingsBtnRef}
                   onClick={() => setShowSettings(!showSettings)}
                   className={`p-1.5 rounded-lg transition-colors border ml-auto ${showSettings ? 'bg-indigo-100 text-indigo-700 border-indigo-200' : 'bg-white text-gray-400 border-gray-100 hover:text-indigo-500'}`}
                 >
@@ -591,7 +681,7 @@ const AppContent: React.FC<AppContentProps> = ({ currentUser, onLogout, onUpdate
             </div>
 
               {showSettings && (
-                <div className="absolute top-32 right-4 w-56 bg-white rounded-xl shadow-2xl border border-gray-100 p-2 z-30 flex flex-col gap-1 animate-fade-in-up">
+                <div ref={settingsRef} className="absolute top-32 right-4 w-56 bg-white rounded-xl shadow-2xl border border-gray-100 p-2 z-30 flex flex-col gap-1 animate-fade-in-up">
                   {currentUser.role !== 'guest' && (
                      <button onClick={() => { setShowProfileSetup(true); setShowSettings(false); }} className="flex items-center gap-2 text-xs text-gray-700 hover:bg-gray-50 p-2 rounded-lg transition-colors w-full text-left font-semibold">
                        <Edit2 className="w-3.5 h-3.5 text-gray-500" /> Editar Perfil
@@ -624,7 +714,7 @@ const AppContent: React.FC<AppContentProps> = ({ currentUser, onLogout, onUpdate
       <main className="flex-1 flex flex-col relative overflow-hidden bg-gray-50/50">
         
         {/* Scrollable Content Area */}
-        <div className="flex-1 overflow-y-auto px-4 pt-4 pb-28 custom-scrollbar">
+        <div className="flex-1 overflow-y-auto px-4 pt-4 custom-scrollbar">
             
             <ScoreBoard state={gameState} totalPhrases={appMode === 'course' ? 1000 : gameState.phrasesCompleted + 5} />
 
@@ -632,7 +722,7 @@ const AppContent: React.FC<AppContentProps> = ({ currentUser, onLogout, onUpdate
             <div className="flex flex-col items-center justify-center py-20 animate-pulse">
                 <RefreshCw className="w-10 h-10 text-indigo-400 animate-spin mb-4" />
                 <p className="text-sm text-gray-500 font-semibold">
-                {appMode === 'course' ? 'Carregando Jornada...' : appMode === 'random' ? 'Embaralhando Frases...' : 'Criando Lição com IA...'}
+                {appMode === 'course' ? 'Carregando Jornada...' : appMode === 'conversation' ? 'Iniciando Conversa...' : 'Criando Lição com IA...'}
                 </p>
             </div>
             )}
@@ -644,80 +734,165 @@ const AppContent: React.FC<AppContentProps> = ({ currentUser, onLogout, onUpdate
             </div>
             )}
 
-            {status !== AppStatus.LOADING_PHRASES && status !== AppStatus.ERROR && phrases.length > 0 && (
-            <div className="flex flex-col items-center w-full max-w-sm mx-auto">
+            {status !== AppStatus.LOADING_PHRASES && status !== AppStatus.ERROR && (
+            <div className="flex flex-col items-center w-full max-w-sm mx-auto h-full">
                 
-                {/* 3D Avatar Compact */}
-                <div className="w-32 h-32 md:w-40 md:h-40 relative -mt-4 mb-2 shrink-0">
-                    <Avatar3D 
-                        isSpeaking={isAvatarSpeaking} 
-                        isRecording={status === AppStatus.RECORDING}
-                        audioAnalyser={audioAnalyser}
-                        disableHeadMotion={disableHeadMotion}
-                    />
-                    <div className="absolute -bottom-2 left-0 right-0 text-center">
-                         {isGeneratingAudio ? (
-                            <span className="inline-flex items-center gap-1.5 text-[10px] bg-white/90 backdrop-blur px-3 py-1 rounded-full text-indigo-600 font-bold shadow-sm border border-indigo-100"> 
-                                <Loader2 className="w-3 h-3 animate-spin" /> Gerando áudio... 
-                            </span>
-                        ) : (
-                            <div className="inline-flex items-center gap-1.5 text-[10px] bg-white/80 backdrop-blur px-3 py-1 rounded-full text-gray-500 font-bold shadow-sm border border-gray-100"> 
-                                <Zap className="w-3 h-3 text-indigo-500" /> 
-                                <span>Toque no mic</span> 
-                            </div>
-                        )}
-                    </div>
+                {/* 3D Avatar Area - Compact Landscape Container */}
+                <div className="w-full h-32 relative mb-4 flex justify-center items-center z-0 shrink-0">
+                     <div className="w-full h-full relative">
+                        <Avatar3D 
+                            isSpeaking={isAvatarSpeaking} 
+                            isRecording={status === AppStatus.RECORDING}
+                            audioAnalyser={audioAnalyser}
+                            disableHeadMotion={disableHeadMotion}
+                        />
+                        <div className="absolute -bottom-1 left-0 right-0 text-center pointer-events-none z-10">
+                            {isGeneratingAudio ? (
+                                <span className="inline-flex items-center gap-1.5 text-[10px] bg-white/90 backdrop-blur px-3 py-1 rounded-full text-indigo-600 font-bold shadow-sm border border-indigo-100"> 
+                                    <Loader2 className="w-3 h-3 animate-spin" /> Gerando áudio... 
+                                </span>
+                            ) : (
+                                <div className="inline-flex items-center gap-1.5 text-[10px] bg-white/80 backdrop-blur px-3 py-1 rounded-full text-gray-500 font-bold shadow-sm border border-gray-100"> 
+                                    <Zap className="w-3 h-3 text-indigo-500" /> 
+                                    <span>Toque no mic</span> 
+                                </div>
+                            )}
+                        </div>
+                     </div>
                 </div>
 
-                <PhraseCard 
-                    phrase={phrases[currentPhraseIndex]} 
-                    onSpeak={() => speakText(phrases[currentPhraseIndex]?.english)}
-                    isSpeaking={isAvatarSpeaking || isGeneratingAudio}
-                />
+                {/* --- CONTENT RENDER LOGIC --- */}
+                
+                {appMode === 'conversation' ? (
+                   // --- CONVERSATION / CHAT VIEW ---
+                   <div 
+                      ref={chatContainerRef}
+                      className="w-full flex-1 overflow-y-auto px-2 space-y-4 mb-4 pb-40" // pb-40 ensures button doesn't cover text
+                   >
+                       {chatHistory.map((msg, index) => (
+                           <div key={index} className={`flex w-full flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                               <div className={`max-w-[85%] p-3.5 rounded-2xl shadow-sm border text-sm font-medium leading-relaxed relative group ${
+                                   msg.role === 'user' 
+                                   ? 'bg-indigo-600 text-white rounded-br-none border-indigo-600' 
+                                   : 'bg-white text-gray-800 rounded-bl-none border-gray-100'
+                               }`}>
+                                   <p className="pr-2">{msg.text}</p>
+                                   
+                                   {/* Message Action Buttons */}
+                                   <div className={`flex items-center gap-2 mt-2 pt-2 border-t ${msg.role === 'user' ? 'border-indigo-500/30' : 'border-gray-100'}`}>
+                                       <button 
+                                           onClick={() => speakText(msg.text)}
+                                           className={`p-1 rounded-full hover:bg-black/10 transition-colors ${msg.role === 'user' ? 'text-indigo-100' : 'text-gray-400'}`}
+                                           title="Ouvir"
+                                       >
+                                           <Volume2 className="w-3.5 h-3.5" />
+                                       </button>
+                                       {msg.role === 'model' && msg.translation && (
+                                           <button 
+                                               onClick={() => setTranslationModalContent(msg.translation || null)}
+                                               className="p-1 rounded-full hover:bg-gray-100 text-gray-400 hover:text-indigo-500 transition-colors"
+                                               title="Traduzir"
+                                           >
+                                               <Languages className="w-3.5 h-3.5" />
+                                           </button>
+                                       )}
+                                   </div>
+                               </div>
 
-                {status === AppStatus.FEEDBACK && result && (
-                    <div className={`w-full mt-4 p-4 rounded-2xl border-2 animate-fade-in-up shadow-sm ${result.isCorrect ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
-                    <div className="flex items-start space-x-3 mb-3">
-                        {result.isCorrect ? ( <CheckCircle className="w-6 h-6 text-green-600 flex-shrink-0" /> ) : ( <XCircle className="w-6 h-6 text-red-600 flex-shrink-0" /> )}
-                        <div className="flex-1">
-                        <h3 className={`font-extrabold text-base mb-1 ${result.isCorrect ? 'text-green-800' : 'text-red-800'}`}> {result.isCorrect ? 'Excelente!' : 'Tente Novamente'} </h3>
-                        <p className="text-gray-700 text-sm mb-2 leading-relaxed font-medium">{result.feedback}</p>
-                        <div className="flex gap-2 mt-2 items-center">
-                            {userAudioUrl && (
-                            <button onClick={playUserAudio} className="flex items-center gap-1.5 text-[10px] bg-white border border-gray-300 px-2 py-1 rounded-md hover:bg-gray-50 text-gray-700 font-bold uppercase tracking-wide shadow-sm"> <Play className="w-2.5 h-2.5" /> Ouvir Gravação </button>
-                            )}
-                            <div className="text-xs font-bold text-gray-400 ml-auto self-center uppercase tracking-wider"> Precisão: <span className={`text-base ml-1 ${result.score >= (appMode === 'words' ? 90 : 80) ? 'text-green-600' : 'text-yellow-600'}`}>{result.score}%</span> </div>
-                        </div>
-                        </div>
-                    </div>
-                    {result.words && result.words.length > 0 && (
-                        <div className="mb-3">
-                        <div className="flex flex-wrap gap-1.5 justify-start">
-                            {result.words.map((w, i) => (
-                            <div key={i} className={`px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide border ${w.status === 'correct' ? 'bg-white border-green-200 text-green-700' : 'bg-red-50 border-red-200 text-red-700'}`}> {w.word} </div>
-                            ))}
-                        </div>
-                        </div>
-                    )}
-                    
-                    <div className="flex flex-col gap-2 mt-3 pt-3 border-t border-gray-200/50">
-                        {result.isCorrect ? (
-                        <button onClick={nextPhrase} className="w-full flex items-center justify-center space-x-2 bg-green-600 text-white px-4 py-3 rounded-xl hover:bg-green-700 transition-colors shadow-lg shadow-green-200/50 font-bold active:scale-95 border-b-4 border-green-800"> <span>Próxima</span> <ArrowRight className="w-4 h-4" /> </button>
-                        ) : (
-                        <button onClick={retryPhrase} className="w-full flex items-center justify-center space-x-2 bg-white text-red-600 border-2 border-red-100 px-4 py-3 rounded-xl hover:bg-red-50 transition-colors font-bold active:scale-95 shadow-sm"> <span>Tentar Novamente</span> <RefreshCw className="w-4 h-4" /> </button>
-                        )}
-                        <button onClick={() => speakText(phrases[currentPhraseIndex].english)} className="w-full flex items-center justify-center space-x-2 text-indigo-600 hover:bg-indigo-50 p-2 rounded-lg transition-colors text-xs font-bold uppercase tracking-wider" disabled={isAvatarSpeaking || isGeneratingAudio}>
-                        {isGeneratingAudio ? ( <Loader2 className="w-3 h-3 animate-spin" /> ) : ( <Volume2 className={`w-3 h-3 ${isAvatarSpeaking ? 'animate-pulse' : ''}`} /> )} <span>Ouvir Frase Original</span>
-                        </button>
-                    </div>
-                    </div>
+                               {/* Tutor Feedback Block - Improved Visibility */}
+                               {msg.feedback && (
+                                   <div className="mt-2 max-w-[85%] bg-orange-50 border border-orange-100 p-3 rounded-xl rounded-tl-none shadow-sm animate-fade-in-up">
+                                       <div className="flex items-start gap-2">
+                                           <AlertTriangle className="w-4 h-4 text-orange-500 shrink-0 mt-0.5" />
+                                           <p className="text-xs text-orange-800 font-semibold leading-relaxed">{msg.feedback}</p>
+                                       </div>
+                                   </div>
+                               )}
+                           </div>
+                       ))}
+                       {status === AppStatus.PROCESSING_AUDIO && (
+                           <div className="flex w-full justify-start">
+                               <div className="bg-white px-4 py-3 rounded-2xl rounded-bl-none shadow-sm border border-gray-100 flex items-center gap-2">
+                                   <div className="flex gap-1">
+                                      <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0s' }}></div>
+                                      <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                                      <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.4s' }}></div>
+                                   </div>
+                               </div>
+                           </div>
+                       )}
+                   </div>
+                ) : (
+                   // --- STANDARD CARD VIEW ---
+                   phrases.length > 0 && (
+                        <PhraseCard 
+                            phrase={phrases[currentPhraseIndex]} 
+                            onSpeak={() => speakText(phrases[currentPhraseIndex]?.english)}
+                            isSpeaking={isAvatarSpeaking || isGeneratingAudio}
+                        />
+                   )
                 )}
+
             </div>
             )}
         </div>
 
+        {/* FEEDBACK POPUP MODAL (Only for standard modes) */}
+        {status === AppStatus.FEEDBACK && result && appMode !== 'conversation' && (
+           <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4 animate-fade-in-up">
+              <div className={`bg-white p-5 rounded-3xl shadow-2xl w-full max-w-sm relative flex flex-col gap-3 border-4 ${result.isCorrect ? 'border-green-100' : 'border-red-100'}`}>
+                 
+                 {/* Close Button */}
+                 <button 
+                    onClick={result.isCorrect ? nextPhrase : retryPhrase}
+                    className="absolute top-3 right-3 text-gray-400 hover:text-gray-600 bg-gray-100 p-1 rounded-full hover:bg-gray-200 transition-colors"
+                 >
+                    <X className="w-5 h-5" />
+                 </button>
+
+                 <div className="flex items-start gap-3">
+                     {result.isCorrect ? ( <CheckCircle className="w-8 h-8 text-green-500 flex-shrink-0" /> ) : ( <XCircle className="w-8 h-8 text-red-500 flex-shrink-0" /> )}
+                     <div>
+                        <h3 className={`font-extrabold text-xl ${result.isCorrect ? 'text-green-800' : 'text-red-800'}`}> {result.isCorrect ? 'Excelente!' : 'Ops!'} </h3>
+                        <p className="text-gray-600 text-sm font-medium leading-relaxed mt-1">{result.feedback}</p>
+                     </div>
+                 </div>
+
+                 {/* Accuracy & Audio Replay */}
+                 <div className="flex items-center justify-between bg-gray-50 p-2 rounded-xl mt-1">
+                    <div className="text-xs font-bold text-gray-500 uppercase tracking-wider">Precisão: <span className={`text-base ml-1 ${result.score >= 80 ? 'text-green-600' : 'text-yellow-600'}`}>{result.score}%</span></div>
+                    {userAudioUrl && (
+                       <button onClick={playUserAudio} className="flex items-center gap-1.5 text-[10px] bg-white border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-100 text-indigo-600 font-bold uppercase tracking-wide shadow-sm"> <Play className="w-3 h-3" /> Ouvir </button>
+                    )}
+                 </div>
+
+                 {/* Word Analysis */}
+                 {result.words && result.words.length > 0 && (
+                     <div className="flex flex-wrap gap-1.5">
+                         {result.words.map((w, i) => (
+                         <span key={i} className={`px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide border ${w.status === 'correct' ? 'bg-green-50 border-green-200 text-green-700' : 'bg-red-50 border-red-200 text-red-700'}`}> {w.word} </span>
+                         ))}
+                     </div>
+                 )}
+
+                 {/* Actions */}
+                 <div className="flex flex-col gap-2 mt-2">
+                     {result.isCorrect ? (
+                         <button onClick={nextPhrase} className="w-full flex items-center justify-center space-x-2 bg-green-600 text-white px-4 py-3.5 rounded-xl hover:bg-green-700 transition-colors shadow-lg shadow-green-200/50 font-bold active:scale-95 text-sm"> <span>Próxima Frase</span> <ArrowRight className="w-4 h-4" /> </button>
+                     ) : (
+                         <button onClick={retryPhrase} className="w-full flex items-center justify-center space-x-2 bg-red-500 text-white px-4 py-3.5 rounded-xl hover:bg-red-600 transition-colors shadow-lg shadow-red-200/50 font-bold active:scale-95 text-sm"> <span>Tentar Novamente</span> <RefreshCw className="w-4 h-4" /> </button>
+                     )}
+                     
+                     <button onClick={() => speakText(phrases[currentPhraseIndex].english)} className="w-full text-indigo-500 hover:text-indigo-700 py-2 text-xs font-bold uppercase tracking-wider transition-colors" disabled={isAvatarSpeaking || isGeneratingAudio}>
+                        {isGeneratingAudio ? 'Carregando...' : 'Ouvir Original Novamente'}
+                     </button>
+                 </div>
+              </div>
+           </div>
+        )}
+
         {/* Fixed Bottom Recorder Area */}
-        {status !== AppStatus.LOADING_PHRASES && status !== AppStatus.ERROR && phrases.length > 0 && status !== AppStatus.FEEDBACK && (
+        {status !== AppStatus.LOADING_PHRASES && status !== AppStatus.ERROR && (phrases.length > 0 || appMode === 'conversation') && status !== AppStatus.FEEDBACK && (
             <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-white via-white to-transparent pt-12 pb-6 px-4 flex justify-center z-10 pointer-events-none">
                 <div className="pointer-events-auto">
                      <AudioRecorder ref={recorderRef} onAudioRecorded={handleAudioRecorded} isProcessing={status === AppStatus.PROCESSING_AUDIO} disabled={status !== AppStatus.READY || isAvatarSpeaking || isGeneratingAudio} />
@@ -732,7 +907,6 @@ const AppContent: React.FC<AppContentProps> = ({ currentUser, onLogout, onUpdate
 };
 
 const App: React.FC = () => {
-  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [users, setUsers] = useState<UserProfile[]>(() => {
     try {
       const saved = localStorage.getItem(USERS_KEY);
@@ -741,7 +915,13 @@ const App: React.FC = () => {
       return [];
     }
   });
-  const [isCreatingProfile, setIsCreatingProfile] = useState(false);
+
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  const [isCreatingNew, setIsCreatingNew] = useState(false);
+
+  useEffect(() => {
+    localStorage.setItem(USERS_KEY, JSON.stringify(users));
+  }, [users]);
 
   const handleLogin = (user: UserProfile) => {
     setCurrentUser(user);
@@ -751,74 +931,68 @@ const App: React.FC = () => {
     setCurrentUser(null);
   };
 
+  const handleCreateNew = () => {
+    setIsCreatingNew(true);
+  };
+
+  const handleSaveProfile = (profileData: Omit<UserProfile, 'id' | 'role'>) => {
+    const newUser: UserProfile = {
+      ...profileData,
+      id: `user_${Date.now()}`,
+      role: 'user'
+    };
+    setUsers(prev => [...prev, newUser]);
+    setCurrentUser(newUser);
+    setIsCreatingNew(false);
+  };
+
   const handleUpdateUser = (updatedUser: UserProfile) => {
-    setCurrentUser(updatedUser);
-    
-    setUsers(prevUsers => {
-      // If the user was already in the list, update them
-      if (prevUsers.some(u => u.id === updatedUser.id)) {
-        const newUsers = prevUsers.map(u => u.id === updatedUser.id ? updatedUser : u);
-        localStorage.setItem(USERS_KEY, JSON.stringify(newUsers));
+    setUsers(prev => {
+      const index = prev.findIndex(u => u.id === updatedUser.id);
+      if (index >= 0) {
+        const newUsers = [...prev];
+        newUsers[index] = updatedUser;
         return newUsers;
-      } 
-      // If they weren't in the list (e.g. guest converting to user), add them
-      else if (updatedUser.role !== 'guest') {
-        const newUsers = [...prevUsers, updatedUser];
-        localStorage.setItem(USERS_KEY, JSON.stringify(newUsers));
-        return newUsers;
+      } else {
+        // If user was guest and is now saving
+        return [...prev, updatedUser];
       }
-      return prevUsers;
     });
+    setCurrentUser(updatedUser);
   };
 
   const handleDeleteUser = (userId: string) => {
-    const newUsers = users.filter(u => u.id !== userId);
-    setUsers(newUsers);
-    localStorage.setItem(USERS_KEY, JSON.stringify(newUsers));
+    setUsers(prev => prev.filter(u => u.id !== userId));
     localStorage.removeItem(`fluentflow_progress_${userId}`);
   };
 
-  const handleCreateProfileSave = (profileData: Omit<UserProfile, 'id' | 'role'>) => {
-      const newUser: UserProfile = {
-          id: `user_${Date.now()}`,
-          role: 'user',
-          ...profileData
-      };
-      const newUsers = [...users, newUser];
-      setUsers(newUsers);
-      localStorage.setItem(USERS_KEY, JSON.stringify(newUsers));
-      setCurrentUser(newUser);
-      setIsCreatingProfile(false);
-  };
-
-  if (isCreatingProfile) {
-      return (
-          <ProfileSetup 
-            onSave={handleCreateProfileSave}
-            onCancel={() => setIsCreatingProfile(false)}
-            existingNames={users.map(u => u.name)}
-          />
-      );
-  }
-
   if (!currentUser) {
+    if (isCreatingNew) {
+      return (
+        <ProfileSetup 
+          onSave={handleSaveProfile} 
+          onCancel={() => setIsCreatingNew(false)}
+          existingNames={users.map(u => u.name)}
+        />
+      );
+    }
     return (
       <LoginScreen 
         users={users} 
         onLogin={handleLogin} 
-        onCreateNew={() => setIsCreatingProfile(true)}
+        onCreateNew={handleCreateNew} 
       />
     );
   }
 
   if (currentUser.role === 'admin') {
-      return (
-          <AdminDashboard 
-            users={users} 
-            onDeleteUser={handleDeleteUser} 
-            onLogout={handleLogout} 
-          />
-      );
+    return (
+      <AdminDashboard 
+        users={users} 
+        onDeleteUser={handleDeleteUser} 
+        onLogout={handleLogout} 
+      />
+    );
   }
 
   return (
@@ -826,7 +1000,7 @@ const App: React.FC = () => {
       <AppContent 
         currentUser={currentUser} 
         onLogout={handleLogout} 
-        onUpdateUser={handleUpdateUser}
+        onUpdateUser={handleUpdateUser} 
       />
     </ErrorBoundary>
   );

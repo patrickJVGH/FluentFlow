@@ -57,7 +57,14 @@ export enum AppStatus {
   ERROR = 'ERROR'
 }
 
-export type AppMode = 'course' | 'practice' | 'words' | 'random';
+export type AppMode = 'course' | 'practice' | 'words' | 'conversation';
+
+export interface ChatMessage {
+  role: 'user' | 'model';
+  text: string;
+  translation?: string; // Portuguese translation
+  feedback?: string; // Optional correction/feedback from the tutor
+}
 
 export const TOPICS = [
   "Introductions & Greetings",
