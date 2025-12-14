@@ -396,11 +396,17 @@ export const processConversationTurn = async (
     const response = await withTimeout<GenerateContentResponse>(apiCall, 45000);
     const result = JSON.parse(response.text || '{}');
     
+    let feedback = result.feedback;
+    // Fix: Model sometimes returns the string "null" instead of null/undefined
+    if (typeof feedback === 'string' && (feedback.toLowerCase() === 'null' || feedback.trim() === '')) {
+        feedback = undefined;
+    }
+
     return {
       transcription: result.transcription || "(Audio unclear)",
       response: result.response || "I didn't catch that. Could you repeat?",
       translation: result.responsePortuguese || "Não entendi, poderia repetir?",
-      feedback: result.feedback || undefined
+      feedback: feedback || undefined
     };
 
   } catch (error) {

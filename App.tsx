@@ -761,7 +761,7 @@ const AppContent: React.FC<AppContentProps> = ({ currentUser, onLogout, onUpdate
                                </div>
 
                                {/* Tutor Feedback Block - Improved Visibility */}
-                               {msg.feedback && (
+                               {msg.feedback && msg.feedback !== 'null' && (
                                    <div className="mt-2 max-w-[85%] bg-orange-50 border border-orange-100 p-3 rounded-xl rounded-tl-none shadow-sm animate-fade-in-up">
                                        <div className="flex items-start gap-2">
                                            <AlertTriangle className="w-4 h-4 text-orange-500 shrink-0 mt-0.5" />
