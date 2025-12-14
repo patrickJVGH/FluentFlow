@@ -1,0 +1,7 @@
+{
+  "name": "FluentFlow - English Practice",
+  "description": "Um aplicativo de prática de conversação inglês-português com feedback de pronúncia via IA e sistema de níveis.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
