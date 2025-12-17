@@ -19,6 +19,7 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(({
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
+  const startTimeRef = useRef<number>(0);
 
   const startRecording = async () => {
     if (isRecording || disabled || isProcessing) return;
@@ -30,6 +31,7 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(({
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
       chunksRef.current = [];
+      startTimeRef.current = Date.now();
 
       mediaRecorder.ondataavailable = (e) => {
         if (e.data.size > 0) {
@@ -38,7 +40,22 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(({
       };
 
       mediaRecorder.onstop = () => {
+        const duration = Date.now() - startTimeRef.current;
+        
+        // Anti-click safeguard: Ignore recordings shorter than 500ms
+        if (duration < 500) {
+            console.warn("Recording too short, ignored.");
+            return;
+        }
+
         const blob = new Blob(chunksRef.current, { type: mediaRecorder.mimeType });
+        
+        // Size safeguard: Ignore empty blobs
+        if (blob.size < 100) {
+            console.warn("Recording empty, ignored.");
+            return;
+        }
+
         const audioUrl = URL.createObjectURL(blob);
         const reader = new FileReader();
         reader.readAsDataURL(blob);
@@ -46,11 +63,6 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(({
           const base64String = (reader.result as string).split(',')[1];
           onAudioRecorded(base64String, mediaRecorder.mimeType, audioUrl);
         };
-        // Stop all tracks to release microphone
-        if (streamRef.current) {
-          streamRef.current.getTracks().forEach(track => track.stop());
-          streamRef.current = null;
-        }
       };
 
       mediaRecorder.start();
@@ -65,6 +77,11 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(({
     if (mediaRecorderRef.current && isRecording) {
       if (mediaRecorderRef.current.state !== 'inactive') {
         mediaRecorderRef.current.stop();
+      }
+      // CRITICAL UPDATE: Stop tracks immediately to free up mic resource and reduce latency sensation
+      if (streamRef.current) {
+         streamRef.current.getTracks().forEach(track => track.stop());
+         streamRef.current = null;
       }
       setIsRecording(false);
     }

@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { Phrase } from '../types';
-import { Eye, EyeOff, Volume2, BookMarked } from 'lucide-react';
+import { Eye, EyeOff, Volume2, BookMarked, Square } from 'lucide-react';
 
 interface PhraseCardProps {
   phrase: Phrase;
@@ -13,10 +13,10 @@ export const PhraseCard: React.FC<PhraseCardProps> = ({ phrase, onSpeak, isSpeak
   const [showTranslation, setShowTranslation] = useState(false);
 
   return (
-    <div className="w-full bg-white rounded-[24px] shadow-lg shadow-gray-100 border border-gray-100 p-6 flex flex-col items-center relative transition-all">
+    <div className="w-full bg-white rounded-[24px] shadow-lg shadow-gray-100 border border-gray-100 p-5 flex flex-col items-center relative transition-all">
       
       {/* Header Info - Discrete */}
-      <div className="w-full flex items-center justify-between mb-8 opacity-80">
+      <div className="w-full flex items-center justify-between mb-4 opacity-80">
         <span className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider ${
           phrase.difficulty === 'easy' ? 'bg-green-50 text-green-700' : 
           phrase.difficulty === 'medium' ? 'bg-yellow-50 text-yellow-700' : 
@@ -34,34 +34,38 @@ export const PhraseCard: React.FC<PhraseCardProps> = ({ phrase, onSpeak, isSpeak
       </div>
 
       {/* Main Phrase - Hero */}
-      <div className="w-full text-center mb-8 px-2">
-        <h2 className="text-3xl md:text-4xl font-extrabold text-gray-800 leading-tight tracking-tight">
+      <div className="w-full text-center mb-6 px-1">
+        <h2 className="text-2xl md:text-3xl font-extrabold text-gray-800 leading-tight tracking-tight break-words">
           {phrase.english}
         </h2>
       </div>
 
       {/* Actions */}
-      <div className="flex flex-col items-center gap-6 w-full">
+      <div className="flex flex-col items-center gap-4 w-full">
         
-        {/* Listen Button */}
+        {/* Listen Button - Acts as STOP when speaking */}
         <button 
           onClick={onSpeak}
-          disabled={isSpeaking}
+          // IMPORTANT: Removed disabled={isSpeaking} to allow stopping
           className={`
             group flex items-center gap-2 px-5 py-2.5 rounded-full transition-all duration-200 active:scale-95
             ${isSpeaking 
-              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200' 
+              ? 'bg-red-50 text-red-600 border border-red-200 shadow-md shadow-red-100 hover:bg-red-100' 
               : 'bg-white text-indigo-600 border border-indigo-100 hover:border-indigo-300 hover:bg-indigo-50'}
           `}
         >
-          <Volume2 className={`w-4 h-4 ${isSpeaking ? 'animate-pulse' : ''}`} />
-          <span className="text-xs font-bold uppercase tracking-widest">{isSpeaking ? 'Ouvindo...' : 'Ouvir Frase'}</span>
+          {isSpeaking ? (
+             <Square className="w-4 h-4 fill-current" />
+          ) : (
+             <Volume2 className="w-4 h-4" />
+          )}
+          <span className="text-xs font-bold uppercase tracking-widest">{isSpeaking ? 'Parar Áudio' : 'Ouvir Frase'}</span>
         </button>
 
         {/* Translation Section - Clean Division */}
-        <div className="w-full pt-6 border-t border-gray-50 flex flex-col items-center">
+        <div className="w-full pt-4 border-t border-gray-50 flex flex-col items-center">
             {showTranslation && (
-                <div className="mb-3 animate-fade-in-up">
+                <div className="mb-2 animate-fade-in-up">
                     <p className="text-base text-gray-600 font-medium italic text-center">
                         "{phrase.portuguese}"
                     </p>

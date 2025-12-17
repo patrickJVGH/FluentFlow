@@ -19,6 +19,12 @@ export interface PronunciationResult {
   feedback: string;
   words?: WordAnalysis[];
   intonation?: string;
+  heardPhrase?: string; // What the AI actually heard
+}
+
+export interface HistoryEntry {
+  date: string; // ISO Date string YYYY-MM-DD
+  score: number;
 }
 
 export interface GameState {
@@ -27,6 +33,7 @@ export interface GameState {
   currentLevel: number;
   phrasesCompleted: number;
   courseProgressIndex: number; // Track progress in the 1000 phrases list
+  history: HistoryEntry[]; // New history tracking
 }
 
 export type UserRole = 'user' | 'admin' | 'guest';
@@ -68,16 +75,18 @@ export interface ChatMessage {
 
 export const TOPICS = [
   "Introductions & Greetings",
-  "Ordering Coffee",
-  "Asking Directions",
-  "At the Airport",
-  "Hotel Check-in",
-  "Shopping for Clothes",
-  "Making Friends",
+  "Ordering Coffee & Food",
+  "Travel & Airport",
+  "Hotel & Accommodation",
+  "Shopping & Fashion",
   "Job Interview",
-  "Emergency Situations",
-  "Casual Small Talk",
-  "Phonetic Challenges (TH, R, L)",
-  "Business Meetings",
-  "Tech & Programming"
+  "Remote Work & Zoom Meetings",
+  "Medical & Health",
+  "Love & Relationships",
+  "Arguments & Debates",
+  "Movies, Music & Culture",
+  "Slang & Casual Speech",
+  "Academic & Formal English",
+  "Tech & Programming",
+  "Phonetic Challenges (TH, R, L)"
 ];
