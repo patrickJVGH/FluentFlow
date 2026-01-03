@@ -13,71 +13,62 @@ export const PhraseCard: React.FC<PhraseCardProps> = ({ phrase, onSpeak, isSpeak
   const [showTranslation, setShowTranslation] = useState(false);
 
   return (
-    <div className="w-full bg-white rounded-[24px] shadow-lg shadow-gray-100 border border-gray-100 p-5 flex flex-col items-center relative transition-all">
+    <div className="w-full bg-white rounded-[40px] p-8 flex flex-col items-center relative transition-all animate-fade-in-up border border-slate-50 shadow-sm">
       
-      {/* Header Info - Discrete */}
-      <div className="w-full flex items-center justify-between mb-4 opacity-80">
-        <span className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider ${
-          phrase.difficulty === 'easy' ? 'bg-green-50 text-green-700' : 
-          phrase.difficulty === 'medium' ? 'bg-yellow-50 text-yellow-700' : 
-          'bg-red-50 text-red-700'
+      <div className="w-full flex items-center justify-between mb-8">
+        <span className={`px-4 py-1.5 rounded-2xl text-[10px] font-black uppercase tracking-widest ${
+          phrase.difficulty === 'easy' ? 'bg-emerald-50 text-emerald-600' : 
+          phrase.difficulty === 'medium' ? 'bg-amber-50 text-amber-600' : 
+          'bg-rose-50 text-rose-600'
         }`}>
           {phrase.difficulty}
         </span>
-        
         {phrase.category && (
-          <span className="flex items-center gap-1.5 text-[10px] font-bold text-gray-400 uppercase tracking-wider">
-            <BookMarked className="w-3 h-3 text-gray-300" />
-            {phrase.category}
+          <span className="text-[10px] font-black text-slate-300 uppercase tracking-widest flex items-center gap-2">
+            <BookMarked className="w-3.5 h-3.5" /> {phrase.category}
           </span>
         )}
       </div>
 
-      {/* Main Phrase - Hero */}
-      <div className="w-full text-center mb-6 px-1">
-        <h2 className="text-2xl md:text-3xl font-extrabold text-gray-800 leading-tight tracking-tight break-words">
+      <div className="w-full text-center mb-10 min-h-[100px] flex items-center justify-center gap-4 group">
+        <h2 className="text-3xl md:text-4xl font-extrabold text-slate-800 leading-tight tracking-tight">
           {phrase.english}
         </h2>
+        <button 
+          onClick={(e) => { 
+            e.preventDefault();
+            e.stopPropagation(); 
+            onSpeak(); 
+          }}
+          className={`p-3 rounded-full transition-all shrink-0 ${isSpeaking ? 'bg-rose-100 text-rose-500 animate-pulse' : 'bg-slate-50 text-slate-300 hover:text-indigo-500 hover:bg-indigo-50'}`}
+          title="Ouvir Pronúncia"
+        >
+          <Volume2 className="w-6 h-6" />
+        </button>
       </div>
 
-      {/* Actions */}
-      <div className="flex flex-col items-center gap-4 w-full">
-        
-        {/* Listen Button - Acts as STOP when speaking */}
+      <div className="flex flex-col items-center gap-6 w-full">
         <button 
-          onClick={onSpeak}
-          // IMPORTANT: Removed disabled={isSpeaking} to allow stopping
-          className={`
-            group flex items-center gap-2 px-5 py-2.5 rounded-full transition-all duration-200 active:scale-95
-            ${isSpeaking 
-              ? 'bg-red-50 text-red-600 border border-red-200 shadow-md shadow-red-100 hover:bg-red-100' 
-              : 'bg-white text-indigo-600 border border-indigo-100 hover:border-indigo-300 hover:bg-indigo-50'}
-          `}
+          onClick={(e) => { e.preventDefault(); onSpeak(); }} 
+          className={`flex items-center gap-3 px-10 py-4.5 rounded-[24px] transition-all font-bold text-sm tracking-tight active:scale-95 ${
+            isSpeaking ? 'bg-rose-50 text-rose-500 shadow-rose-100' : 'bg-indigo-50 text-indigo-600 shadow-indigo-100'
+          } shadow-xl`}
         >
-          {isSpeaking ? (
-             <Square className="w-4 h-4 fill-current" />
-          ) : (
-             <Volume2 className="w-4 h-4" />
-          )}
-          <span className="text-xs font-bold uppercase tracking-widest">{isSpeaking ? 'Parar Áudio' : 'Ouvir Frase'}</span>
+          {isSpeaking ? <Square className="w-4 h-4 fill-current" /> : <Volume2 className="w-4 h-4" />}
+          {isSpeaking ? 'Parar Áudio' : 'Ouvir Pronúncia'}
         </button>
 
-        {/* Translation Section - Clean Division */}
-        <div className="w-full pt-4 border-t border-gray-50 flex flex-col items-center">
+        <div className="w-full pt-8 border-t border-slate-50/80 flex flex-col items-center">
             {showTranslation && (
-                <div className="mb-2 animate-fade-in-up">
-                    <p className="text-base text-gray-600 font-medium italic text-center">
+                <div className="mb-4 animate-fade-in-up px-4">
+                    <p className="text-xl text-slate-400 font-medium italic text-center leading-relaxed">
                         "{phrase.portuguese}"
                     </p>
                 </div>
             )}
-            
-            <button
-            onClick={() => setShowTranslation(!showTranslation)}
-            className="flex items-center gap-1.5 text-[10px] font-bold text-gray-300 hover:text-indigo-500 transition-colors uppercase tracking-widest py-2"
-            >
-            {showTranslation ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-            <span>{showTranslation ? 'Ocultar' : 'Ver Tradução'}</span>
+            <button onClick={() => setShowTranslation(!showTranslation)} className="text-[10px] font-black text-slate-300 hover:text-indigo-400 uppercase tracking-widest transition-colors flex items-center gap-2">
+              {showTranslation ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              {showTranslation ? 'Ocultar' : 'Ver Tradução'}
             </button>
         </div>
       </div>

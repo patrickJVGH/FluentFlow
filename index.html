@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
   <head>
@@ -6,33 +7,55 @@
     <title>FluentFlow - English Practice</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-      body {
-        font-family: 'Inter', sans-serif;
+      @import url('https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700;800&display=swap');
+      
+      :root {
+        --brand-primary: #4f46e5;
+        --brand-bg: #f8fafc;
       }
+
+      body {
+        font-family: 'Lexend', sans-serif;
+        background-color: var(--brand-bg);
+        color: #1e293b;
+      }
+
       @keyframes fadeInUp {
         from {
           opacity: 0;
-          transform: translate3d(0, 20px, 0);
+          transform: translate3d(0, 15px, 0);
         }
         to {
           opacity: 1;
           transform: translate3d(0, 0, 0);
         }
       }
+
       .animate-fade-in-up {
-        animation: fadeInUp 0.5s ease-out forwards;
+        animation: fadeInUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
       }
-      /* Custom Scrollbar for better mobile feel */
+
+      /* Custom Scrollbar */
       .custom-scrollbar::-webkit-scrollbar {
-        width: 4px;
+        width: 5px;
       }
       .custom-scrollbar::-webkit-scrollbar-track {
         background: transparent;
       }
       .custom-scrollbar::-webkit-scrollbar-thumb {
-        background-color: #cbd5e1;
-        border-radius: 20px;
+        background-color: #e2e8f0;
+        border-radius: 10px;
+      }
+
+      /* Glassmorphism effects */
+      .glass {
+        background: rgba(255, 255, 255, 0.7);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+      }
+      
+      .mask-gradient-top {
+        mask-image: linear-gradient(to bottom, transparent, black 15%, black 85%, transparent);
       }
     </style>
     <script type="importmap">

@@ -1,4 +1,5 @@
 
+
 export interface Phrase {
   id: string;
   english: string;
@@ -19,11 +20,11 @@ export interface PronunciationResult {
   feedback: string;
   words?: WordAnalysis[];
   intonation?: string;
-  heardPhrase?: string; // What the AI actually heard
+  transcript?: string; 
 }
 
 export interface HistoryEntry {
-  date: string; // ISO Date string YYYY-MM-DD
+  date: string; 
   score: number;
 }
 
@@ -32,8 +33,8 @@ export interface GameState {
   streak: number;
   currentLevel: number;
   phrasesCompleted: number;
-  courseProgressIndex: number; // Track progress in the 1000 phrases list
-  history: HistoryEntry[]; // New history tracking
+  courseProgressIndex: number; 
+  history: HistoryEntry[]; 
 }
 
 export type UserRole = 'user' | 'admin' | 'guest';
@@ -41,7 +42,7 @@ export type UserRole = 'user' | 'admin' | 'guest';
 export interface UserProfile {
   id: string;
   name: string;
-  avatarColor: string; // Tailwind class like 'bg-blue-500'
+  avatarColor: string; 
   joinedDate: number;
   role: UserRole;
 }
@@ -69,8 +70,9 @@ export type AppMode = 'course' | 'practice' | 'words' | 'conversation';
 export interface ChatMessage {
   role: 'user' | 'model';
   text: string;
-  translation?: string; // Portuguese translation
-  feedback?: string; // Optional correction/feedback from the tutor
+  translation?: string; 
+  feedback?: string; // Didactic correction
+  improvement?: string; // Suggestions for better phrasing
 }
 
 export const TOPICS = [
