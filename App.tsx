@@ -13,9 +13,7 @@ import { ProgressHistory } from './components/ProgressHistory';
 import { ModeSelector } from './components/ModeSelector';
 import { AdminDashboard } from './components/AdminDashboard';
 import { TopicSelector } from './components/TopicSelector';
-import { Logo } from './components/Logo';
-// Fixed error: Added missing User import from lucide-react
-import { BarChart, Loader2, Settings, Volume2, Sparkles, AlertCircle, CheckCircle2, BookOpen, MessageCircle, Type, Home, Edit3, User, Layers } from 'lucide-react';
+import { BarChart, Loader2, Settings, Volume2, AlertCircle, CheckCircle2, Home, User, Layers, Radio, Monitor, MonitorOff, ToggleLeft, ToggleRight } from 'lucide-react';
 
 const USERS_KEY = 'fluentflow_users';
 
@@ -37,13 +35,18 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   
-  // Controls
   const [showProfileSetup, setShowProfileSetup] = useState(currentUser.name === '' && currentUser.role !== 'guest');
   const [showSettings, setShowSettings] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showTopicSelector, setShowTopicSelector] = useState(false);
   const [isAvatarSpeaking, setIsAvatarSpeaking] = useState(false);
   
+  // New: Toggle for 3D Avatar
+  const [isAvatarEnabled, setIsAvatarEnabled] = useState(() => {
+    const saved = localStorage.getItem(`fluentflow_settings_avatar_${currentUser.id}`);
+    return saved !== null ? JSON.parse(saved) : true;
+  });
+
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioAnalyserRef = useRef<AnalyserNode | null>(null);
   const sourceNodeRef = useRef<AudioBufferSourceNode | null>(null);
@@ -52,41 +55,69 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
   const [analyserForAvatar, setAnalyserForAvatar] = useState<AnalyserNode | null>(null);
 
   const [gameState, setGameState] = useState<GameState>(() => {
-    const saved = localStorage.getItem(`fluentflow_progress_${currentUser.id}`);
-    if (saved) return JSON.parse(saved);
-    return { score: 0, streak: 0, currentLevel: 1, phrasesCompleted: 0, courseProgressIndex: 0, history: [] };
+    const defaultState: GameState = { score: 0, streak: 0, currentLevel: 1, phrasesCompleted: 0, courseProgressIndex: 0, history: [] };
+    try {
+      const saved = localStorage.getItem(`fluentflow_progress_${currentUser.id}`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return {
+          score: typeof parsed.score === 'number' ? parsed.score : defaultState.score,
+          streak: typeof parsed.streak === 'number' ? parsed.streak : defaultState.streak,
+          currentLevel: typeof parsed.currentLevel === 'number' ? parsed.currentLevel : defaultState.currentLevel,
+          phrasesCompleted: typeof parsed.phrasesCompleted === 'number' ? parsed.phrasesCompleted : defaultState.phrasesCompleted,
+          courseProgressIndex: typeof parsed.courseProgressIndex === 'number' ? parsed.courseProgressIndex : defaultState.courseProgressIndex,
+          history: Array.isArray(parsed.history) ? parsed.history : defaultState.history
+        };
+      }
+    } catch (e) {
+      console.error("Failed to parse progress for user:", currentUser.id, e);
+    }
+    return defaultState;
   });
 
   useEffect(() => {
-    const today = new Date().toISOString().split('T')[0];
-    const newHistory = [...gameState.history];
-    const todayEntryIndex = newHistory.findIndex(h => h.date === today);
+    localStorage.setItem(`fluentflow_settings_avatar_${currentUser.id}`, JSON.stringify(isAvatarEnabled));
+  }, [isAvatarEnabled, currentUser.id]);
 
-    if (todayEntryIndex >= 0) {
-      newHistory[todayEntryIndex].score = gameState.score;
-    } else {
-      newHistory.push({ date: today, score: gameState.score });
+  useEffect(() => {
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const newHistory = [...gameState.history];
+      const todayEntryIndex = newHistory.findIndex(h => h.date === today);
+      if (todayEntryIndex >= 0) {
+        newHistory[todayEntryIndex].score = gameState.score;
+      } else {
+        newHistory.push({ date: today, score: gameState.score });
+      }
+      const updatedState = { ...gameState, history: newHistory };
+      localStorage.setItem(`fluentflow_progress_${currentUser.id}`, JSON.stringify(updatedState));
+    } catch (e) {
+      console.error("Failed to save progress:", e);
     }
-
-    const updatedState = { ...gameState, history: newHistory };
-    localStorage.setItem(`fluentflow_progress_${currentUser.id}`, JSON.stringify(updatedState));
-  }, [gameState.score, currentUser.id]);
+  }, [gameState.score, currentUser.id, gameState.history]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatHistory, status]);
 
   useEffect(() => {
-    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-    const analyser = ctx.createAnalyser();
-    analyser.fftSize = 256;
-    analyser.connect(ctx.destination);
-    
-    audioContextRef.current = ctx;
-    audioAnalyserRef.current = analyser;
-    setAnalyserForAvatar(analyser);
-
-    return () => { ctx.close(); };
+    const initAudio = async () => {
+      try {
+        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 256;
+        analyser.connect(ctx.destination);
+        audioContextRef.current = ctx;
+        audioAnalyserRef.current = analyser;
+        setAnalyserForAvatar(analyser);
+      } catch (e) {
+        console.error("Audio Context initialization failed:", e);
+      }
+    };
+    initAudio();
+    return () => { 
+      if (audioContextRef.current) audioContextRef.current.close(); 
+    };
   }, []);
 
   const ensureAudioContext = async () => {
@@ -125,7 +156,7 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
       sourceNodeRef.current = source;
       source.start(0);
     } catch (e) { 
-      console.error(e);
+      console.error("Speech synthesis failed:", e);
       setIsAvatarSpeaking(false); 
     }
   };
@@ -148,7 +179,6 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
       try { sourceNodeRef.current.stop(); } catch (e) {}
       sourceNodeRef.current = null;
     }
-
     try {
       let loadedPhrases: Phrase[] = [];
       if (mode === 'course') {
@@ -183,30 +213,39 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
   const handleAudioRecorded = async (base64: string, mimeType: string) => {
     await ensureAudioContext();
     setStatus(AppStatus.PROCESSING_AUDIO);
-    if (appMode === 'conversation') {
-      const response = await processConversationTurn(base64, mimeType, chatHistory);
-      setChatHistory(prev => [...prev, 
-        { role: 'user', text: response.transcription },
-        { role: 'model', text: response.response, translation: response.translation, feedback: response.feedback, improvement: response.improvement }
-      ]);
-      setGameState(prev => ({ ...prev, score: prev.score + 15 })); 
-      speakText(response.response);
+    try {
+      if (appMode === 'conversation') {
+        const response = await processConversationTurn(base64, mimeType, chatHistory);
+        if (response.isSilent) {
+          setStatus(AppStatus.READY);
+          return;
+        }
+        setChatHistory(prev => [...prev, 
+          { role: 'user', text: response.transcription },
+          { role: 'model', text: response.response, translation: response.translation, feedback: response.feedback, improvement: response.improvement }
+        ]);
+        setGameState(prev => ({ ...prev, score: prev.score + 15 })); 
+        speakText(response.response);
+        setStatus(AppStatus.READY);
+      } else {
+        const res = await validatePronunciation(base64, mimeType, phrases[currentPhraseIndex].english);
+        if (!(res.isCorrect && res.score > 30 && res.transcript && res.transcript.trim().length > 0)) {
+          res.isCorrect = false; res.score = 0; res.feedback = "Não ouvi sua voz com clareza. Tente novamente!";
+        }
+        setResult(res);
+        if (res.isCorrect) {
+          setGameState(prev => ({ 
+            ...prev, 
+            score: prev.score + res.score, 
+            phrasesCompleted: prev.phrasesCompleted + 1,
+            courseProgressIndex: appMode === 'course' ? prev.courseProgressIndex + 1 : prev.courseProgressIndex
+          }));
+        }
+        setStatus(AppStatus.FEEDBACK);
+      }
+    } catch (e) {
+      console.error("Audio recording processing failed:", e);
       setStatus(AppStatus.READY);
-    } else {
-      const res = await validatePronunciation(base64, mimeType, phrases[currentPhraseIndex].english);
-      if (!(res.isCorrect && res.score > 40 && res.transcript && res.transcript.trim().length > 0)) {
-        res.isCorrect = false; res.score = 0; res.feedback = "Não ouvi sua voz com clareza. Tente novamente!";
-      }
-      setResult(res);
-      if (res.isCorrect) {
-        setGameState(prev => ({ 
-          ...prev, 
-          score: prev.score + res.score, 
-          phrasesCompleted: prev.phrasesCompleted + 1,
-          courseProgressIndex: appMode === 'course' ? prev.courseProgressIndex + 1 : prev.courseProgressIndex
-        }));
-      }
-      setStatus(AppStatus.FEEDBACK);
     }
   };
 
@@ -246,7 +285,7 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
   };
 
   return (
-    <div className="flex flex-col h-screen bg-[#F8FAFC] overflow-hidden">
+    <div className="flex flex-col h-screen bg-[#F8FAFC] overflow-hidden font-sans">
       <header className="bg-white/80 backdrop-blur-md border-b px-5 py-3 flex items-center justify-between z-30 shrink-0">
         <div className="flex items-center gap-3">
           <button 
@@ -255,9 +294,6 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
             title="Configurações de Perfil"
           >
             {currentUser.name[0] || 'V'}
-            <div className="absolute -bottom-1 -right-1 bg-white p-0.5 rounded-md shadow-sm opacity-0 group-hover:opacity-100 transition-opacity">
-              <Edit3 className="w-2.5 h-2.5 text-indigo-600" />
-            </div>
           </button>
           <div className="flex flex-col">
             <h1 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
@@ -270,11 +306,6 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {appMode === 'practice' && (
-            <button onClick={() => setShowTopicSelector(true)} className="p-2 text-indigo-500 hover:bg-indigo-50 rounded-lg transition-colors" title="Trocar Tópico">
-              <Layers className="w-4 h-4" />
-            </button>
-          )}
           {appMode && (
             <button onClick={() => handleModeChange(null)} className="p-2 text-slate-400 hover:text-indigo-600 rounded-lg transition-colors" title="Voltar ao Início">
               <Home className="w-4 h-4" />
@@ -290,11 +321,25 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
       </header>
 
       {showSettings && (
-        <div className="absolute top-14 right-5 w-56 bg-white rounded-2xl shadow-2xl border p-2 z-50 animate-fade-in-up">
+        <div className="absolute top-14 right-5 w-60 bg-white rounded-2xl shadow-2xl border p-2 z-50 animate-fade-in-up">
           <p className="px-3 py-2 text-[10px] font-black text-slate-300 uppercase tracking-widest">Opções</p>
           <button onClick={() => handleModeChange(null)} className="w-full text-left p-3 rounded-xl text-sm font-semibold flex items-center gap-3 text-slate-600 hover:bg-slate-50">
              <Home className="w-4 h-4" /> Início / Modos
           </button>
+          
+          <div className="border-t my-1"></div>
+          <button 
+            onClick={() => setIsAvatarEnabled(!isAvatarEnabled)} 
+            className="w-full text-left p-3 rounded-xl text-sm font-semibold flex items-center justify-between text-slate-600 hover:bg-slate-50"
+          >
+             <div className="flex items-center gap-3">
+               {isAvatarEnabled ? <Monitor className="w-4 h-4" /> : <MonitorOff className="w-4 h-4 text-slate-300" />}
+               <span>Avatar EVE 3D</span>
+             </div>
+             {isAvatarEnabled ? <ToggleRight className="w-5 h-5 text-indigo-600" /> : <ToggleLeft className="w-5 h-5 text-slate-300" />}
+          </button>
+          <div className="border-t my-1"></div>
+
           <button onClick={() => { setShowProfileSetup(true); setShowSettings(false); }} className="w-full text-left p-3 rounded-xl text-sm font-semibold flex items-center gap-3 text-slate-600 hover:bg-slate-50">
              <User className="w-4 h-4" /> Editar Perfil
           </button>
@@ -309,12 +354,33 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
           <>
             <div className="shrink-0 p-4 pb-0 z-20">
               <ScoreBoard state={gameState} totalPhrases={1000} />
-              <div className={`transition-all duration-500 relative ${appMode === 'conversation' ? 'h-[100px]' : 'h-[160px]'}`}>
-                <Avatar3D isSpeaking={isAvatarSpeaking} isRecording={status === AppStatus.RECORDING} audioAnalyser={analyserForAvatar} />
+              
+              <div className={`transition-all duration-500 overflow-hidden relative mt-2 pointer-events-none ${isAvatarEnabled ? 'h-48' : 'h-24'}`}>
+                {isAvatarEnabled ? (
+                  <Avatar3D isSpeaking={isAvatarSpeaking} isRecording={status === AppStatus.RECORDING} audioAnalyser={analyserForAvatar} />
+                ) : (
+                  <div className="w-full h-full flex flex-col items-center justify-center gap-2 animate-fade-in">
+                    <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center text-slate-400">
+                      <Radio className={`w-6 h-6 ${isAvatarSpeaking ? 'animate-pulse text-indigo-400' : ''}`} />
+                    </div>
+                    <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">Modo Performance Ativo</span>
+                  </div>
+                )}
+                
+                <div className="absolute top-2 left-0 right-0 flex justify-center">
+                   {(isAvatarSpeaking || status === AppStatus.RECORDING) && (
+                     <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-widest animate-fade-in bg-white/50 backdrop-blur-sm border border-white/80 shadow-sm ${
+                       status === AppStatus.RECORDING ? 'text-red-500' : 'text-cyan-600'
+                     }`}>
+                       <Radio className={`w-3 h-3 ${status === AppStatus.RECORDING ? 'animate-pulse' : ''}`} />
+                       {status === AppStatus.RECORDING ? 'Ouvindo...' : 'Falando...'}
+                     </div>
+                   )}
+                </div>
               </div>
             </div>
 
-            <div className="flex-1 flex flex-col min-h-0 overflow-hidden px-4 py-2">
+            <div className="flex-1 flex flex-col min-h-0 overflow-hidden px-4 py-2 relative z-10">
               {appMode === 'conversation' ? (
                 <div className="flex-1 overflow-y-auto space-y-4 custom-scrollbar pr-1 pb-4">
                   {chatHistory.map((msg, i) => (
@@ -341,12 +407,12 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
                   {status === AppStatus.LOADING_PHRASES ? (
                     <div className="flex flex-col items-center justify-center gap-4 py-10">
                         <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
-                        <p className="text-xs font-bold text-slate-300 uppercase tracking-widest">Carregando {selectedTopic || ''}...</p>
+                        <p className="text-xs font-bold text-slate-300 uppercase tracking-widest">Carregando...</p>
                     </div>
                   ) : status === AppStatus.FEEDBACK && result ? (
-                    <div className="bg-white rounded-[32px] p-6 shadow-xl border border-slate-50 flex flex-col items-center animate-fade-in-up">
-                      <div className={`w-12 h-12 rounded-2xl flex items-center justify-center mb-3 ${result.score > 50 ? 'bg-emerald-50 text-emerald-500' : 'bg-rose-50 text-rose-500'}`}>
-                          {result.score > 50 ? <CheckCircle2 /> : <AlertCircle />}
+                    <div className="bg-white rounded-[32px] p-6 shadow-xl border border-slate-50 flex flex-col items-center animate-fade-in-up mx-2">
+                      <div className={`w-12 h-12 rounded-2xl flex items-center justify-center mb-3 ${result.score > 30 ? 'bg-emerald-50 text-emerald-500' : 'bg-rose-50 text-rose-500'}`}>
+                          {result.score > 30 ? <CheckCircle2 /> : <AlertCircle />}
                       </div>
                       <h2 className="text-2xl font-black text-slate-800">{result.score}%</h2>
                       <p className="text-center text-slate-500 text-xs mt-2 mb-6 leading-relaxed">{result.feedback}</p>
@@ -399,8 +465,12 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
 
 const App: React.FC = () => {
   const [users, setUsers] = useState<UserProfile[]>(() => {
-    const saved = localStorage.getItem(USERS_KEY);
-    return saved ? JSON.parse(saved) : [];
+    try {
+      const saved = localStorage.getItem(USERS_KEY);
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      return [];
+    }
   });
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
 
@@ -409,10 +479,7 @@ const App: React.FC = () => {
   }, [users]);
 
   const handleLogin = (user: UserProfile) => {
-    setUsers(prev => {
-      if (prev.some(u => u.id === user.id)) return prev;
-      return [...prev, user];
-    });
+    setUsers(prev => prev.some(u => u.id === user.id) ? prev : [...prev, user]);
     setCurrentUser(user);
   };
 

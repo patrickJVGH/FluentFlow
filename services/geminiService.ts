@@ -1,9 +1,7 @@
 
-
 import { GoogleGenAI, Type, Modality, GenerateContentResponse } from "@google/genai";
 import { Phrase, PronunciationResult, ChatMessage } from "../types";
 
-// Always use const ai = new GoogleGenAI({apiKey: process.env.API_KEY});
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 const modelName = 'gemini-3-flash-preview';
@@ -13,42 +11,40 @@ const CONVERSATION_SYSTEM_PROMPT = `
 ROLE: You are EVE, a sympathetic and expert English tutor. 
 OBJECTIVE: Engage in natural conversation while providing high-quality pedagogical feedback.
 
-FOR EVERY USER INPUT:
-1. Transcribe exactly what the user said.
-2. Provide a conversational response in English (friendly, concise).
-3. Provide a Portuguese translation of your response.
-4. ANALYZE THE USER'S ENGLISH:
-   - Identify grammar errors, unnatural phrasing, or vocabulary improvements.
-   - Suggest a more "native-like" way to say what they intended.
-   - Give a brief tip in Portuguese about their specific mistake.
+CRITICAL RULE FOR SILENCE:
+- If the audio contains NO SPEECH, only silence, or only background noise:
+  - You MUST set "isSilent": true.
+  - Set "transcription": "".
+  - Set "response": "I couldn't hear you. Could you repeat that?".
+
+FOR VALID USER INPUT:
+1. Transcribe exactly what the user said in "transcription".
+2. Set "isSilent": false.
+3. Provide a conversational response in English in "response".
+4. Provide a Portuguese translation in "responsePortuguese".
+5. ANALYZE THE USER'S ENGLISH:
+   - Identify grammar errors or unnatural phrasing.
+   - Suggest a more "native-like" way in "improvement".
+   - Give a brief tip in Portuguese in "feedback".
 `;
 
 const PRONUNCIATION_SYSTEM_PROMPT = `
 ROLE: You are a strict English Pronunciation Coach.
 OBJECTIVE: Compare the user's audio input with the target phrase.
-
-CRITICAL RULES:
-1. ZERO TOLERANCE FOR SILENCE: If the audio is silent, only noise, or just a cough/breath, YOU MUST return isCorrect: false, score: 0, and feedback: "Não ouvi sua voz. Por favor, fale mais alto ou verifique seu microfone."
-2. NO HALLUCINATION: Do not try to "guess" words. If it's not recognizable English matching the target, score is 0.
-3. SCORING: 
-   - 90-100: Very clear.
-   - 70-89: Good, minor issues.
-   - 40-69: Understandable but heavy errors.
-   - 0-39: Incorrect or Unintelligible.
-4. FEEDBACK: Give a short, helpful tip in Portuguese.
+CRITICAL: If it is silent or unintelligible, score must be 0 and isCorrect false.
 `;
 
-// Define schemas as plain objects to avoid unsupported type imports
 const conversationSchema = {
   type: Type.OBJECT,
   properties: {
+    isSilent: { type: Type.BOOLEAN, description: "True if no speech was detected in the audio" },
     transcription: { type: Type.STRING },
     response: { type: Type.STRING },
     responsePortuguese: { type: Type.STRING },
     feedback: { type: Type.STRING },
     improvement: { type: Type.STRING }
   },
-  required: ['transcription', 'response', 'responsePortuguese']
+  required: ['isSilent', 'transcription', 'response', 'responsePortuguese']
 };
 
 const validationSchema = {
@@ -99,15 +95,14 @@ export const processConversationTurn = async (
   audioBase64: string,
   mimeType: string,
   history: ChatMessage[]
-): Promise<{ transcription: string; response: string; translation: string; feedback?: string; improvement?: string }> => {
+): Promise<{ isSilent: boolean; transcription: string; response: string; translation: string; feedback?: string; improvement?: string }> => {
   try {
     const historyContext = history.slice(-5).map(h => `${h.role === 'user' ? 'User' : 'EVE'}: ${h.text}`).join('\n');
-    // Ensure contents uses the parts structure inside a Content object
     const apiCall = ai.models.generateContent({
       model: modelName,
       contents: {
         parts: [
-          { text: `CONTEXT:\n${historyContext}\n\nUSER AUDIO INPUT IS BELOW.` },
+          { text: `CONTEXT:\n${historyContext}\n\nUSER AUDIO INPUT IS BELOW. If you hear nothing, set isSilent to true.` },
           { inlineData: { mimeType, data: audioBase64 } }
         ]
       },
@@ -115,33 +110,32 @@ export const processConversationTurn = async (
         systemInstruction: CONVERSATION_SYSTEM_PROMPT,
         responseMimeType: "application/json",
         responseSchema: conversationSchema,
-        temperature: 0.7
+        temperature: 0.1 // Lower temperature for more accuracy
       },
     });
     const response = await withTimeout<GenerateContentResponse>(apiCall, 45000);
-    // Use .text property directly
     const result = JSON.parse(response.text || '{}');
     return {
-      transcription: result.transcription || "...",
-      response: result.response || "I didn't hear you clearly.",
-      translation: result.responsePortuguese || "Não ouvi bem.",
+      isSilent: !!result.isSilent,
+      transcription: result.transcription || "",
+      response: result.response || "I couldn't hear you clearly.",
+      translation: result.responsePortuguese || "Não consegui te ouvir claramente.",
       feedback: result.feedback,
       improvement: result.improvement
     };
   } catch (error) {
-    return { transcription: "(Error)", response: "Connection error.", translation: "Erro de conexão." };
+    return { isSilent: false, transcription: "(Error)", response: "Connection error.", translation: "Erro de conexão." };
   }
 };
 
 export const validatePronunciation = async (audioBase64: string, mimeType: string, targetPhrase: string): Promise<PronunciationResult> => {
   try {
-    // Ensure contents uses the parts structure inside a Content object
     const apiCall = ai.models.generateContent({
       model: modelName,
       contents: {
         parts: [
           { inlineData: { mimeType, data: audioBase64 } },
-          { text: `Target phrase: "${targetPhrase}". Be extremely strict about silence and noise.` }
+          { text: `Target phrase: "${targetPhrase}". Be extremely strict about silence.` }
         ]
       },
       config: {
@@ -152,7 +146,6 @@ export const validatePronunciation = async (audioBase64: string, mimeType: strin
       },
     });
     const response = await withTimeout<GenerateContentResponse>(apiCall, 30000);
-    // Use .text property directly
     return JSON.parse(response.text || '{}');
   } catch (e) {
     return { isCorrect: false, score: 0, feedback: "Erro ao processar áudio." };
@@ -169,7 +162,6 @@ export const generateSpeech = async (text: string): Promise<string | null> => {
         speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } },
       },
     });
-    // Correct access to audio data in candidates
     return response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || null;
   } catch (e) { return null; }
 };
@@ -177,13 +169,12 @@ export const generateSpeech = async (text: string): Promise<string | null> => {
 export const generatePhrases = async (topic: string, difficulty: string, count: number = 5): Promise<Phrase[]> => {
   const response = await ai.models.generateContent({
     model: modelName,
-    contents: `Generate ${count} English phrases about ${topic} with ${difficulty} difficulty. Include Portuguese translations.`,
+    contents: `Generate ${count} English phrases about ${topic} with ${difficulty} difficulty.`,
     config: {
       responseMimeType: "application/json",
       responseSchema: phraseGenerationSchema,
     }
   });
-  // Use .text property directly
   const data = JSON.parse(response.text || '[]');
   return data.map((p: any, i: number) => ({ ...p, id: `gen_${Date.now()}_${i}` }));
 };
@@ -191,13 +182,12 @@ export const generatePhrases = async (topic: string, difficulty: string, count: 
 export const generateWords = async (category: string, difficulty: string, count: number = 10): Promise<Phrase[]> => {
   const response = await ai.models.generateContent({
     model: modelName,
-    contents: `Generate ${count} common English words related to ${category} that are usually hard to pronounce. Include translations.`,
+    contents: `Generate ${count} common English words related to ${category}.`,
     config: {
       responseMimeType: "application/json",
       responseSchema: phraseGenerationSchema,
     }
   });
-  // Use .text property directly
   const data = JSON.parse(response.text || '[]');
   return data.map((p: any, i: number) => ({ ...p, id: `word_${Date.now()}_${i}` }));
 };
