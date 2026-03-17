@@ -53,6 +53,7 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioAnalyserRef = useRef<AnalyserNode | null>(null);
   const sourceNodeRef = useRef<AudioBufferSourceNode | null>(null);
+  const speechSynthesisUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const audioCacheRef = useRef<Map<string, AudioBuffer>>(new Map());
   const speechRequestIdRef = useRef<number>(0);
   const [analyserForAvatar, setAnalyserForAvatar] = useState<AnalyserNode | null>(null);
@@ -97,6 +98,9 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
     };
     initAudio();
     return () => { 
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
       if (audioContextRef.current) audioContextRef.current.close();
     };
   }, []);
@@ -113,26 +117,62 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
       try { sourceNodeRef.current.stop(); } catch (e) {}
       sourceNodeRef.current = null;
     }
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+    speechSynthesisUtteranceRef.current = null;
     setIsAvatarSpeaking(false);
   }, []);
 
+  const speakWithBrowserTts = (text: string, currentId: number): boolean => {
+    if (!('speechSynthesis' in window)) return false;
+    try {
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = 'en-US';
+      utterance.rate = 1;
+      utterance.pitch = 1;
+      utterance.onend = () => {
+        if (currentId === speechRequestIdRef.current) setIsAvatarSpeaking(false);
+      };
+      utterance.onerror = () => {
+        if (currentId === speechRequestIdRef.current) setIsAvatarSpeaking(false);
+      };
+      speechSynthesisUtteranceRef.current = utterance;
+      window.speechSynthesis.speak(utterance);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   const speakText = async (text: string) => {
     if (!text) return;
-    await ensureAudioContext();
-    const context = audioContextRef.current;
-    const analyser = audioAnalyserRef.current;
-    if (!context || !analyser) return;
-    
+
     stopAllSpeech();
     const currentId = speechRequestIdRef.current;
     
     setIsAvatarSpeaking(true);
     try {
+      await ensureAudioContext();
+      const context = audioContextRef.current;
+      const analyser = audioAnalyserRef.current;
+      if (!context || !analyser) {
+        if (!speakWithBrowserTts(text, currentId)) {
+          setIsAvatarSpeaking(false);
+        }
+        return;
+      }
+
       let buffer = audioCacheRef.current.get(text);
       if (!buffer) {
         const base64 = await generateSpeech(text);
         if (currentId !== speechRequestIdRef.current) return;
-        if (!base64) { setIsAvatarSpeaking(false); return; }
+        if (!base64) {
+          if (!speakWithBrowserTts(text, currentId)) {
+            setIsAvatarSpeaking(false);
+          }
+          return;
+        }
         const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
         buffer = decodeRawPCM(bytes, context);
         audioCacheRef.current.set(text, buffer);
@@ -145,7 +185,9 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
       sourceNodeRef.current = source;
       source.start(0);
     } catch (e) { 
-      setIsAvatarSpeaking(false); 
+      if (!speakWithBrowserTts(text, currentId)) {
+        setIsAvatarSpeaking(false);
+      }
     }
   };
 

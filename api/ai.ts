@@ -5,6 +5,7 @@ const chatModel = 'gpt-4o-mini';
 const transcriptionModel = 'gpt-4o-mini-transcribe';
 const ttsModel = process.env.OPENAI_TTS_MODEL?.trim() || 'gpt-4o-mini-tts';
 const ttsFallbackModels = ['tts-1', 'tts-1-hd'];
+const disableServerTts = process.env.DISABLE_SERVER_TTS === '1';
 let ttsUnavailable = false;
 
 const decodeAudio = (audioBase64: string): Buffer => Buffer.from(audioBase64, 'base64');
@@ -91,7 +92,8 @@ export default async function handler(req: any, res: any) {
   if (req.method === 'GET') {
     return res.status(200).json({
       ok: true,
-      hasOpenAIKey: Boolean(process.env.OPENAI_API_KEY?.trim())
+      hasOpenAIKey: Boolean(process.env.OPENAI_API_KEY?.trim()),
+      serverTtsDisabled: disableServerTts
     });
   }
 
@@ -183,6 +185,9 @@ export default async function handler(req: any, res: any) {
       const { text } = payload || {};
       if (!text || typeof text !== 'string') {
         return res.status(400).json({ error: 'Missing text for speech action' });
+      }
+      if (disableServerTts) {
+        return res.status(200).json({ base64: null, ttsUnavailable: true });
       }
       if (ttsUnavailable) {
         return res.status(200).json({ base64: null, ttsUnavailable: true });
