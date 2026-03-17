@@ -179,9 +179,12 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
     }
   }, [gameState.courseProgressIndex, currentUser.name, selectedTopic, stopAllSpeech]);
 
-  useEffect(() => { 
-    if (appMode) loadData(appMode); 
-  }, [appMode, loadData]);
+  useEffect(() => {
+    if (appMode) loadData(appMode);
+    // Intentionally react only to mode transitions to avoid reloading phrases mid-session
+    // when unrelated state (e.g. score/progress/chat length) changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appMode]);
 
   const handleAudioRecorded = async (base64: string, mimeType: string) => {
     if (!base64) return;
@@ -354,8 +357,13 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
 
 const App: React.FC = () => {
   const [users, setUsers] = useState<UserProfile[]>(() => {
-    const saved = localStorage.getItem(USERS_KEY);
-    return saved ? JSON.parse(saved) : [];
+    try {
+      const saved = localStorage.getItem(USERS_KEY);
+      const parsed = saved ? JSON.parse(saved) : [];
+      return Array.isArray(parsed) ? parsed.filter((u: UserProfile) => u.role !== 'admin') : [];
+    } catch {
+      return [];
+    }
   });
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
 
@@ -363,14 +371,30 @@ const App: React.FC = () => {
     localStorage.setItem(USERS_KEY, JSON.stringify(users));
   }, [users]);
 
+  const handleLogin = (user: UserProfile) => {
+    if (user.role !== 'admin') {
+      setUsers(prev => prev.some(u => u.id === user.id) ? prev : [...prev, user]);
+    }
+    setCurrentUser(user);
+  };
+
+  const handleDeleteUser = (userId: string) => {
+    setUsers(prev => prev.filter(u => u.id !== userId));
+    localStorage.removeItem(`fluentflow_progress_${userId}`);
+  };
+
   if (!currentUser) {
     return (
       <LoginScreen 
         users={users} 
-        onLogin={setCurrentUser} 
+        onLogin={handleLogin} 
         onCreateNew={() => setCurrentUser({ id: `u_${Date.now()}`, name: '', avatarColor: 'bg-indigo-500', joinedDate: Date.now(), role: 'user' })} 
       />
     );
+  }
+
+  if (currentUser.role === 'admin') {
+    return <AdminDashboard users={users} onDeleteUser={handleDeleteUser} onLogout={() => setCurrentUser(null)} />;
   }
 
   return (

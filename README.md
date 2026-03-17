@@ -2,19 +2,30 @@
 <img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
 </div>
 
-# Run and deploy your AI Studio app
+# FluentFlow
 
-This contains everything you need to run your app locally.
+Aplicativo de prática de inglês com IA.
 
-View your app in AI Studio: https://ai.studio/apps/drive/1NuatjrhHhE_C_M6D-ZwwmaQv32zN-lGC
+## Rodar localmente
 
-## Run Locally
+**Pré-requisitos:** Node.js 18+
 
-**Prerequisites:**  Node.js
-
-
-1. Install dependencies:
+1. Instale dependências:
    `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
+2. Crie `.env.local` com:
+   `OPENAI_API_KEY=...`
+3. Rode:
    `npm run dev`
+
+## Deploy na Vercel
+
+Este projeto já está preparado para Vercel com frontend Vite + função serverless em `/api/ai`.
+
+1. Conecte o repositório na Vercel (se já conectou, apenas redeploy).
+2. Em **Project Settings → Environment Variables**, configure:
+   - `OPENAI_API_KEY` (Preview e Production)
+3. Deploy.
+
+### Importante de segurança
+
+A chave da OpenAI agora fica apenas no backend (Vercel Function), não no bundle do navegador.
