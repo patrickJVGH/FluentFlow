@@ -3,9 +3,12 @@ import { toFile } from 'openai/uploads';
 
 const chatModel = 'gpt-4o-mini';
 const transcriptionModel = 'gpt-4o-mini-transcribe';
+const transcriptionFallbackModels = ['whisper-1'];
 const ttsModel = process.env.OPENAI_TTS_MODEL?.trim() || 'gpt-4o-mini-tts';
 const ttsFallbackModels = ['tts-1', 'tts-1-hd'];
+const disableServerTranscription = process.env.DISABLE_SERVER_TRANSCRIPTION === '1';
 const disableServerTts = process.env.DISABLE_SERVER_TTS === '1';
+let transcriptionUnavailable = false;
 let ttsUnavailable = false;
 
 const decodeAudio = (audioBase64: string): Buffer => Buffer.from(audioBase64, 'base64');
@@ -18,15 +21,73 @@ const safeJsonParse = <T>(text: string, fallback: T): T => {
   }
 };
 
-const transcribeAudio = async (openai: OpenAI, audioBase64: string, mimeType: string): Promise<string> => {
+type TranscriptionResult = {
+  text: string;
+  unavailable: boolean;
+};
+
+const canFallbackTranscriptionModel = (error: any): boolean => {
+  const message = String(error?.message || '').toLowerCase();
+  return (
+    error?.status === 403 ||
+    message.includes('does not have access to model') ||
+    message.includes('model_not_found')
+  );
+};
+
+const isTranscriptionAccessError = (error: any): boolean => {
+  const message = String(error?.message || '').toLowerCase();
+  return (
+    error?.status === 403 &&
+    (message.includes('does not have access to model') || message.includes('model_not_found'))
+  );
+};
+
+const transcribeAudio = async (openai: OpenAI, audioBase64: string, mimeType: string): Promise<TranscriptionResult> => {
+  if (disableServerTranscription || transcriptionUnavailable) {
+    return { text: '', unavailable: true };
+  }
+  if (!audioBase64 || !mimeType || typeof audioBase64 !== 'string' || typeof mimeType !== 'string') {
+    return { text: '', unavailable: false };
+  }
+
   const ext = mimeType.includes('webm') ? 'webm' : mimeType.includes('mp4') ? 'm4a' : 'wav';
   const audioFile = await toFile(decodeAudio(audioBase64), `audio.${ext}`);
-  const tx = await openai.audio.transcriptions.create({
-    file: audioFile,
-    model: transcriptionModel,
-    language: 'en'
-  });
-  return (tx.text || '').trim();
+  const modelCandidates = [transcriptionModel, ...transcriptionFallbackModels.filter(model => model !== transcriptionModel)];
+
+  let lastError: any = null;
+  for (const model of modelCandidates) {
+    try {
+      const tx = await openai.audio.transcriptions.create({
+        file: audioFile,
+        model,
+        language: 'en'
+      });
+      return { text: (tx.text || '').trim(), unavailable: false };
+    } catch (error: any) {
+      lastError = error;
+      if (!canFallbackTranscriptionModel(error) || model === modelCandidates[modelCandidates.length - 1]) {
+        if (isTranscriptionAccessError(error)) {
+          transcriptionUnavailable = true;
+          console.warn('[api/ai] Disabling transcription for this runtime due to model access restrictions', {
+            message: error?.message
+          });
+          return { text: '', unavailable: true };
+        }
+        throw error;
+      }
+      console.warn('[api/ai] Transcription model unavailable, trying fallback', {
+        model,
+        message: error?.message
+      });
+    }
+  }
+
+  if (isTranscriptionAccessError(lastError)) {
+    transcriptionUnavailable = true;
+    return { text: '', unavailable: true };
+  }
+  throw lastError;
 };
 
 const jsonFromChat = async <T>(openai: OpenAI, systemPrompt: string, userPrompt: string, fallback: T): Promise<T> => {
@@ -93,6 +154,7 @@ export default async function handler(req: any, res: any) {
     return res.status(200).json({
       ok: true,
       hasOpenAIKey: Boolean(process.env.OPENAI_API_KEY?.trim()),
+      serverTranscriptionDisabled: disableServerTranscription,
       serverTtsDisabled: disableServerTts
     });
   }
@@ -112,9 +174,19 @@ export default async function handler(req: any, res: any) {
 
     if (action === 'conversation') {
       const { audioBase64, mimeType, history } = payload || {};
-      const transcription = await transcribeAudio(openai, audioBase64, mimeType);
+      const transcriptionResult = await transcribeAudio(openai, audioBase64, mimeType);
+      const transcription = transcriptionResult.text;
 
       if (!transcription) {
+        if (transcriptionResult.unavailable) {
+          return res.status(200).json({
+            isSilent: false,
+            transcription: '',
+            response: "Voice recognition is unavailable right now. You can continue with text-based practice.",
+            translation: 'Reconhecimento de voz indisponível no momento. Você pode continuar com prática em texto.',
+            feedback: 'STT indisponível neste projeto OpenAI.'
+          });
+        }
         return res.status(200).json({
           isSilent: true,
           transcription: '',
@@ -148,9 +220,19 @@ export default async function handler(req: any, res: any) {
 
     if (action === 'pronunciation') {
       const { audioBase64, mimeType, targetPhrase } = payload || {};
-      const transcript = await transcribeAudio(openai, audioBase64, mimeType);
+      const transcriptionResult = await transcribeAudio(openai, audioBase64, mimeType);
+      const transcript = transcriptionResult.text;
 
       if (!transcript) {
+        if (transcriptionResult.unavailable) {
+          return res.status(200).json({
+            transcript: '',
+            isCorrect: false,
+            score: 0,
+            feedback: 'Reconhecimento de voz indisponível no servidor (sem acesso a modelo de transcrição).',
+            words: []
+          });
+        }
         return res.status(200).json({
           transcript: '',
           isCorrect: false,
