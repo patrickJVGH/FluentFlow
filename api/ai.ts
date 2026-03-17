@@ -5,6 +5,7 @@ const chatModel = 'gpt-4o-mini';
 const transcriptionModel = 'gpt-4o-mini-transcribe';
 const ttsModel = process.env.OPENAI_TTS_MODEL?.trim() || 'gpt-4o-mini-tts';
 const ttsFallbackModels = ['tts-1', 'tts-1-hd'];
+let ttsUnavailable = false;
 
 const decodeAudio = (audioBase64: string): Buffer => Buffer.from(audioBase64, 'base64');
 
@@ -48,6 +49,14 @@ const canFallbackTtsModel = (error: any): boolean => {
     error?.status === 403 ||
     message.includes('does not have access to model') ||
     message.includes('model_not_found')
+  );
+};
+
+const isTtsAccessError = (error: any): boolean => {
+  const message = String(error?.message || '').toLowerCase();
+  return (
+    error?.status === 403 &&
+    (message.includes('does not have access to model') || message.includes('model_not_found'))
   );
 };
 
@@ -175,8 +184,23 @@ export default async function handler(req: any, res: any) {
       if (!text || typeof text !== 'string') {
         return res.status(400).json({ error: 'Missing text for speech action' });
       }
+      if (ttsUnavailable) {
+        return res.status(200).json({ base64: null, ttsUnavailable: true });
+      }
 
-      const speech = await createSpeechWithFallback(openai, text);
+      let speech: any;
+      try {
+        speech = await createSpeechWithFallback(openai, text);
+      } catch (error: any) {
+        if (isTtsAccessError(error)) {
+          ttsUnavailable = true;
+          console.warn('[api/ai] Disabling TTS for this runtime due to model access restrictions', {
+            message: error?.message
+          });
+          return res.status(200).json({ base64: null, ttsUnavailable: true });
+        }
+        throw error;
+      }
 
       const audioBuffer = Buffer.from(await speech.arrayBuffer());
       return res.status(200).json({ base64: audioBuffer.toString('base64') });
