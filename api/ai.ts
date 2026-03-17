@@ -1,8 +1,6 @@
 import OpenAI from 'openai';
 import { toFile } from 'openai/uploads';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
 const chatModel = 'gpt-4o-mini';
 const transcriptionModel = 'gpt-4o-mini-transcribe';
 const ttsModel = 'gpt-4o-mini-tts';
@@ -17,7 +15,7 @@ const safeJsonParse = <T>(text: string, fallback: T): T => {
   }
 };
 
-const transcribeAudio = async (audioBase64: string, mimeType: string): Promise<string> => {
+const transcribeAudio = async (openai: OpenAI, audioBase64: string, mimeType: string): Promise<string> => {
   const ext = mimeType.includes('webm') ? 'webm' : mimeType.includes('mp4') ? 'm4a' : 'wav';
   const audioFile = await toFile(decodeAudio(audioBase64), `audio.${ext}`);
   const tx = await openai.audio.transcriptions.create({
@@ -28,7 +26,7 @@ const transcribeAudio = async (audioBase64: string, mimeType: string): Promise<s
   return (tx.text || '').trim();
 };
 
-const jsonFromChat = async <T>(systemPrompt: string, userPrompt: string, fallback: T): Promise<T> => {
+const jsonFromChat = async <T>(openai: OpenAI, systemPrompt: string, userPrompt: string, fallback: T): Promise<T> => {
   const completion = await openai.chat.completions.create({
     model: chatModel,
     temperature: 0.2,
@@ -48,16 +46,18 @@ export default async function handler(req: any, res: any) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  if (!process.env.OPENAI_API_KEY) {
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  if (!apiKey) {
     return res.status(500).json({ error: 'OPENAI_API_KEY is not set' });
   }
+  const openai = new OpenAI({ apiKey });
 
   try {
     const { action, payload } = req.body || {};
 
     if (action === 'conversation') {
       const { audioBase64, mimeType, history } = payload || {};
-      const transcription = await transcribeAudio(audioBase64, mimeType);
+      const transcription = await transcribeAudio(openai, audioBase64, mimeType);
 
       if (!transcription) {
         return res.status(200).json({
@@ -70,6 +70,7 @@ export default async function handler(req: any, res: any) {
 
       const historyText = (history || []).slice(-5).map((h: any) => `${h.role === 'user' ? 'User' : 'Tutor'}: ${h.text}`).join('\n');
       const out = await jsonFromChat(
+        openai,
         'You are EVE, an English tutor. Return valid JSON only with keys: response, responsePortuguese, feedback, improvement.',
         `Conversation history:\n${historyText}\n\nUser said: "${transcription}"\nRespond naturally in English and provide a PT-BR translation and brief feedback.`,
         {
@@ -92,7 +93,7 @@ export default async function handler(req: any, res: any) {
 
     if (action === 'pronunciation') {
       const { audioBase64, mimeType, targetPhrase } = payload || {};
-      const transcript = await transcribeAudio(audioBase64, mimeType);
+      const transcript = await transcribeAudio(openai, audioBase64, mimeType);
 
       if (!transcript) {
         return res.status(200).json({
@@ -105,6 +106,7 @@ export default async function handler(req: any, res: any) {
       }
 
       const result = await jsonFromChat(
+        openai,
         'You are a strict English pronunciation coach. Return JSON only with keys: transcript,isCorrect,score,feedback,words.',
         `Target phrase: "${targetPhrase}"\nUser transcript: "${transcript}"\nEvaluate if pronunciation is correct, assign score 0-100, and return words array with {word,status,phoneticIssue?}. status must be correct or needs_improvement.`,
         {
@@ -140,6 +142,7 @@ export default async function handler(req: any, res: any) {
     if (action === 'generatePhrases') {
       const { topic, difficulty, count = 5 } = payload || {};
       const result = await jsonFromChat<any[]>(
+        openai,
         'Return JSON array only. Each item must have english, portuguese, difficulty (easy|medium|hard), category.',
         `Generate ${count} English learning phrases about "${topic}" with ${difficulty} difficulty.`,
         []
@@ -159,6 +162,7 @@ export default async function handler(req: any, res: any) {
     if (action === 'generateWords') {
       const { category, count = 10 } = payload || {};
       const result = await jsonFromChat<any[]>(
+        openai,
         'Return JSON array only. Each item must have english, portuguese, difficulty (easy|medium|hard), category.',
         `Generate ${count} common English words related to ${category}.`,
         []
