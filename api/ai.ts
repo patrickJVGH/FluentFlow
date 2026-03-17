@@ -3,7 +3,8 @@ import { toFile } from 'openai/uploads';
 
 const chatModel = 'gpt-4o-mini';
 const transcriptionModel = 'gpt-4o-mini-transcribe';
-const ttsModel = 'gpt-4o-mini-tts';
+const ttsModel = process.env.OPENAI_TTS_MODEL?.trim() || 'gpt-4o-mini-tts';
+const ttsFallbackModels = ['tts-1', 'tts-1-hd'];
 
 const decodeAudio = (audioBase64: string): Buffer => Buffer.from(audioBase64, 'base64');
 
@@ -39,6 +40,42 @@ const jsonFromChat = async <T>(openai: OpenAI, systemPrompt: string, userPrompt:
 
   const content = completion.choices[0]?.message?.content || '';
   return safeJsonParse<T>(content, fallback);
+};
+
+const canFallbackTtsModel = (error: any): boolean => {
+  const message = String(error?.message || '').toLowerCase();
+  return (
+    error?.status === 403 ||
+    message.includes('does not have access to model') ||
+    message.includes('model_not_found')
+  );
+};
+
+const createSpeechWithFallback = async (openai: OpenAI, text: string) => {
+  const modelCandidates = [ttsModel, ...ttsFallbackModels.filter(model => model !== ttsModel)];
+
+  let lastError: any = null;
+  for (const model of modelCandidates) {
+    try {
+      return await openai.audio.speech.create({
+        model,
+        voice: 'alloy',
+        input: text,
+        response_format: 'pcm'
+      });
+    } catch (error: any) {
+      lastError = error;
+      if (!canFallbackTtsModel(error) || model === modelCandidates[modelCandidates.length - 1]) {
+        throw error;
+      }
+      console.warn('[api/ai] TTS model unavailable, trying fallback', {
+        model,
+        message: error?.message
+      });
+    }
+  }
+
+  throw lastError;
 };
 
 export default async function handler(req: any, res: any) {
@@ -135,12 +172,11 @@ export default async function handler(req: any, res: any) {
 
     if (action === 'speech') {
       const { text } = payload || {};
-      const speech = await openai.audio.speech.create({
-        model: ttsModel,
-        voice: 'alloy',
-        input: text,
-        response_format: 'pcm'
-      });
+      if (!text || typeof text !== 'string') {
+        return res.status(400).json({ error: 'Missing text for speech action' });
+      }
+
+      const speech = await createSpeechWithFallback(openai, text);
 
       const audioBuffer = Buffer.from(await speech.arrayBuffer());
       return res.status(200).json({ base64: audioBuffer.toString('base64') });
