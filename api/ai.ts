@@ -130,7 +130,7 @@ export default async function handler(req: any, res: any) {
         model: ttsModel,
         voice: 'alloy',
         input: text,
-        format: 'pcm'
+        response_format: 'pcm'
       });
 
       const audioBuffer = Buffer.from(await speech.arrayBuffer());
