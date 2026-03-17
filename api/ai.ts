@@ -1,13 +1,19 @@
 import OpenAI from 'openai';
 import { toFile } from 'openai/uploads';
 
+const envFlag = (value?: string): boolean => {
+  if (!value) return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
+};
+
 const chatModel = 'gpt-4o-mini';
 const transcriptionModel = 'gpt-4o-mini-transcribe';
 const transcriptionFallbackModels = ['whisper-1'];
 const ttsModel = process.env.OPENAI_TTS_MODEL?.trim() || 'gpt-4o-mini-tts';
 const ttsFallbackModels = ['tts-1', 'tts-1-hd'];
-const disableServerTranscription = process.env.DISABLE_SERVER_TRANSCRIPTION === '1';
-const disableServerTts = process.env.DISABLE_SERVER_TTS === '1';
+const disableServerTranscription = envFlag(process.env.DISABLE_SERVER_TRANSCRIPTION);
+const disableServerTts = envFlag(process.env.DISABLE_SERVER_TTS);
 let transcriptionUnavailable = false;
 let ttsUnavailable = false;
 
