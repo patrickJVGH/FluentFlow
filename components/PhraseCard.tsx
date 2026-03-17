@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { Phrase } from '../types';
-import { Eye, EyeOff, Volume2, BookMarked, Square } from 'lucide-react';
+import { Eye, Volume2, BookMarked, Square } from 'lucide-react';
 
 interface PhraseCardProps {
   phrase: Phrase;
@@ -13,63 +13,59 @@ export const PhraseCard: React.FC<PhraseCardProps> = ({ phrase, onSpeak, isSpeak
   const [showTranslation, setShowTranslation] = useState(false);
 
   return (
-    <div className="w-full bg-white rounded-[40px] p-8 flex flex-col items-center relative transition-all animate-fade-in-up border border-slate-50 shadow-sm">
+    <div className="w-full bg-white rounded-[28px] sm:rounded-[40px] p-5 sm:p-8 flex flex-col items-center relative transition-all animate-fade-in-up border border-slate-50 shadow-sm">
       
-      <div className="w-full flex items-center justify-between mb-8">
-        <span className={`px-4 py-1.5 rounded-2xl text-[10px] font-black uppercase tracking-widest ${
+      <div className="w-full flex items-center justify-between mb-4 sm:mb-8">
+        <span className={`px-2.5 py-1 rounded-xl text-[8px] sm:text-[10px] font-black uppercase tracking-widest ${
           phrase.difficulty === 'easy' ? 'bg-emerald-50 text-emerald-600' : 
           phrase.difficulty === 'medium' ? 'bg-amber-50 text-amber-600' : 
           'bg-rose-50 text-rose-600'
         }`}>
           {phrase.difficulty}
         </span>
-        {phrase.category && (
-          <span className="text-[10px] font-black text-slate-300 uppercase tracking-widest flex items-center gap-2">
-            <BookMarked className="w-3.5 h-3.5" /> {phrase.category}
-          </span>
-        )}
+        <span className="text-[8px] sm:text-[10px] font-black text-slate-300 uppercase tracking-widest flex items-center gap-1.5">
+          <BookMarked className="w-3 h-3" /> {phrase.category || 'Geral'}
+        </span>
       </div>
 
-      <div className="w-full text-center mb-10 min-h-[100px] flex items-center justify-center gap-4 group">
-        <h2 className="text-3xl md:text-4xl font-extrabold text-slate-800 leading-tight tracking-tight">
+      <div className="w-full text-center mb-6 sm:mb-10 min-h-[60px] sm:min-h-[100px] flex items-center justify-center gap-3">
+        <h2 className="text-lg sm:text-2xl md:text-3xl font-extrabold text-slate-800 leading-tight tracking-tight px-2">
           {phrase.english}
         </h2>
         <button 
-          onClick={(e) => { 
-            e.preventDefault();
-            e.stopPropagation(); 
-            onSpeak(); 
-          }}
-          className={`p-3 rounded-full transition-all shrink-0 ${isSpeaking ? 'bg-rose-100 text-rose-500 animate-pulse' : 'bg-slate-50 text-slate-300 hover:text-indigo-500 hover:bg-indigo-50'}`}
-          title="Ouvir Pronúncia"
+          onClick={(e) => { e.stopPropagation(); onSpeak(); }}
+          className={`p-2 sm:p-3 rounded-full shrink-0 transition-all ${isSpeaking ? 'bg-rose-50 text-rose-500 animate-pulse' : 'bg-slate-50 text-slate-300 hover:text-indigo-500 hover:bg-indigo-50'}`}
         >
-          <Volume2 className="w-6 h-6" />
+          <Volume2 className="w-4 h-4 sm:w-6 h-6" />
         </button>
       </div>
 
-      <div className="flex flex-col items-center gap-6 w-full">
+      <div className="flex flex-col items-center gap-3 sm:gap-6 w-full">
         <button 
-          onClick={(e) => { e.preventDefault(); onSpeak(); }} 
-          className={`flex items-center gap-3 px-10 py-4.5 rounded-[24px] transition-all font-bold text-sm tracking-tight active:scale-95 ${
-            isSpeaking ? 'bg-rose-50 text-rose-500 shadow-rose-100' : 'bg-indigo-50 text-indigo-600 shadow-indigo-100'
-          } shadow-xl`}
+          onClick={onSpeak} 
+          className={`w-full sm:w-auto px-8 py-3.5 rounded-2xl sm:rounded-[24px] font-bold text-xs sm:text-sm active:scale-95 transition-all shadow-lg ${
+            isSpeaking ? 'bg-rose-50 text-rose-500' : 'bg-indigo-50 text-indigo-600 shadow-indigo-100'
+          }`}
         >
-          {isSpeaking ? <Square className="w-4 h-4 fill-current" /> : <Volume2 className="w-4 h-4" />}
-          {isSpeaking ? 'Parar Áudio' : 'Ouvir Pronúncia'}
+          {isSpeaking ? 'Ouvindo...' : 'Ouvir Guia'}
         </button>
 
-        <div className="w-full pt-8 border-t border-slate-50/80 flex flex-col items-center">
-            {showTranslation && (
-                <div className="mb-4 animate-fade-in-up px-4">
-                    <p className="text-xl text-slate-400 font-medium italic text-center leading-relaxed">
+        <div className="w-full pt-4 sm:pt-8 border-t border-slate-50 flex flex-col items-center min-h-[60px] justify-center">
+            {showTranslation ? (
+                <div className="animate-fade-in-up text-center">
+                    <p className="text-sm sm:text-lg text-slate-400 font-medium italic">
                         "{phrase.portuguese}"
                     </p>
+                    <button onClick={() => setShowTranslation(false)} className="text-[8px] font-black text-slate-200 uppercase mt-2">Ocultar</button>
                 </div>
+            ) : (
+                <button 
+                  onClick={() => setShowTranslation(true)} 
+                  className="text-[9px] font-black text-slate-300 hover:text-indigo-500 uppercase tracking-widest flex items-center gap-2"
+                >
+                  <Eye className="w-3.5 h-3.5" /> Ver Tradução
+                </button>
             )}
-            <button onClick={() => setShowTranslation(!showTranslation)} className="text-[10px] font-black text-slate-300 hover:text-indigo-400 uppercase tracking-widest transition-colors flex items-center gap-2">
-              {showTranslation ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              {showTranslation ? 'Ocultar' : 'Ver Tradução'}
-            </button>
         </div>
       </div>
     </div>

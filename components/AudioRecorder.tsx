@@ -41,16 +41,12 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(({
 
       mediaRecorder.onstop = () => {
         const duration = Date.now() - startTimeRef.current;
-        
-        // Anti-click safeguard: Ignore recordings shorter than 500ms
         if (duration < 500) {
             console.warn("Recording too short, ignored.");
             return;
         }
 
         const blob = new Blob(chunksRef.current, { type: mediaRecorder.mimeType });
-        
-        // Size safeguard: Ignore empty blobs
         if (blob.size < 100) {
             console.warn("Recording empty, ignored.");
             return;
@@ -78,7 +74,6 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(({
       if (mediaRecorderRef.current.state !== 'inactive') {
         mediaRecorderRef.current.stop();
       }
-      // CRITICAL UPDATE: Stop tracks immediately to free up mic resource and reduce latency sensation
       if (streamRef.current) {
          streamRef.current.getTracks().forEach(track => track.stop());
          streamRef.current = null;
@@ -101,7 +96,6 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(({
     isRecording
   }));
 
-  // Clean up on unmount
   React.useEffect(() => {
     return () => {
       if (streamRef.current) {
@@ -111,35 +105,30 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(({
   }, []);
 
   return (
-    <div className="flex flex-col items-center justify-center py-4 gap-3">
-      {/* The Button - Hero */}
+    <div className="flex flex-col items-center justify-center py-2 sm:py-4 gap-2 sm:gap-3">
       <button
         onClick={toggleRecording}
         disabled={disabled || isProcessing}
         className={`
-          relative w-20 h-20 rounded-full flex items-center justify-center shadow-xl transition-all duration-300 select-none
+          relative w-16 h-16 sm:w-20 sm:h-20 rounded-full flex items-center justify-center shadow-xl transition-all duration-300 select-none
           ${disabled ? 'bg-gray-100 cursor-not-allowed text-gray-300 shadow-none ring-0' : ''}
           ${!disabled && !isRecording && !isProcessing ? 'bg-indigo-600 text-white hover:bg-indigo-700 hover:scale-105 hover:shadow-indigo-300/40 shadow-indigo-200 ring-4 ring-indigo-50' : ''}
-          ${isRecording ? 'bg-red-500 text-white ring-4 ring-red-100 scale-110 shadow-red-200 animate-pulse-slow' : ''}
+          ${isRecording ? 'bg-red-500 text-white ring-4 ring-red-100 scale-110 shadow-red-200 animate-pulse' : ''}
           ${isProcessing ? 'bg-white border-2 border-indigo-100 text-indigo-500 cursor-wait' : ''}
         `}
-        title="Gravar Áudio"
       >
         {isProcessing ? (
-          <Loader2 className="w-8 h-8 animate-spin" />
+          <Loader2 className="w-7 h-7 sm:w-8 sm:h-8 animate-spin" />
         ) : isRecording ? (
-          <div className="flex flex-col items-center">
-            <Square className="w-8 h-8 fill-current rounded-sm" />
-          </div>
+          <Square className="w-6 h-6 sm:w-8 sm:h-8 fill-current rounded-sm" />
         ) : (
-          <Mic className="w-9 h-9" />
+          <Mic className="w-7 h-7 sm:w-9 sm:h-9" />
         )}
       </button>
       
-      {/* Status Text - Minimal */}
       <div className="h-4 flex items-center justify-center">
-        <p className={`text-[10px] font-bold uppercase tracking-widest transition-opacity duration-300 ${isRecording ? 'text-red-500' : 'text-gray-400'}`}>
-            {isRecording ? "Gravando..." : isProcessing ? "Processando..." : disabled ? "" : "Toque para falar"}
+        <p className={`text-[9px] sm:text-[10px] font-bold uppercase tracking-widest transition-opacity duration-300 ${isRecording ? 'text-red-500' : 'text-gray-400'}`}>
+            {isRecording ? "Gravando..." : isProcessing ? "Processando..." : ""}
         </p>
       </div>
     </div>

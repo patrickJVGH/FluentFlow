@@ -13,7 +13,7 @@ import { ProgressHistory } from './components/ProgressHistory';
 import { ModeSelector } from './components/ModeSelector';
 import { AdminDashboard } from './components/AdminDashboard';
 import { TopicSelector } from './components/TopicSelector';
-import { BarChart, Loader2, Settings, Volume2, AlertCircle, CheckCircle2, Home, User, Layers, Radio, Monitor, MonitorOff, ToggleLeft, ToggleRight } from 'lucide-react';
+import { BarChart, Loader2, Settings, Volume2, AlertCircle, CheckCircle2, Home, User, Radio, Monitor, MonitorOff, ToggleLeft, ToggleRight, Sparkles } from 'lucide-react';
 
 const USERS_KEY = 'fluentflow_users';
 
@@ -41,10 +41,13 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
   const [showTopicSelector, setShowTopicSelector] = useState(false);
   const [isAvatarSpeaking, setIsAvatarSpeaking] = useState(false);
   
-  // New: Toggle for 3D Avatar
   const [isAvatarEnabled, setIsAvatarEnabled] = useState(() => {
-    const saved = localStorage.getItem(`fluentflow_settings_avatar_${currentUser.id}`);
-    return saved !== null ? JSON.parse(saved) : true;
+    try {
+      const saved = localStorage.getItem(`ff_avatar_pref_${currentUser.id}`);
+      return saved !== null ? JSON.parse(saved) : true;
+    } catch {
+      return true;
+    }
   });
 
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -58,43 +61,20 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
     const defaultState: GameState = { score: 0, streak: 0, currentLevel: 1, phrasesCompleted: 0, courseProgressIndex: 0, history: [] };
     try {
       const saved = localStorage.getItem(`fluentflow_progress_${currentUser.id}`);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        return {
-          score: typeof parsed.score === 'number' ? parsed.score : defaultState.score,
-          streak: typeof parsed.streak === 'number' ? parsed.streak : defaultState.streak,
-          currentLevel: typeof parsed.currentLevel === 'number' ? parsed.currentLevel : defaultState.currentLevel,
-          phrasesCompleted: typeof parsed.phrasesCompleted === 'number' ? parsed.phrasesCompleted : defaultState.phrasesCompleted,
-          courseProgressIndex: typeof parsed.courseProgressIndex === 'number' ? parsed.courseProgressIndex : defaultState.courseProgressIndex,
-          history: Array.isArray(parsed.history) ? parsed.history : defaultState.history
-        };
-      }
-    } catch (e) {
-      console.error("Failed to parse progress for user:", currentUser.id, e);
-    }
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
     return defaultState;
   });
 
   useEffect(() => {
-    localStorage.setItem(`fluentflow_settings_avatar_${currentUser.id}`, JSON.stringify(isAvatarEnabled));
+    localStorage.setItem(`ff_avatar_pref_${currentUser.id}`, JSON.stringify(isAvatarEnabled));
   }, [isAvatarEnabled, currentUser.id]);
 
   useEffect(() => {
     try {
-      const today = new Date().toISOString().split('T')[0];
-      const newHistory = [...gameState.history];
-      const todayEntryIndex = newHistory.findIndex(h => h.date === today);
-      if (todayEntryIndex >= 0) {
-        newHistory[todayEntryIndex].score = gameState.score;
-      } else {
-        newHistory.push({ date: today, score: gameState.score });
-      }
-      const updatedState = { ...gameState, history: newHistory };
-      localStorage.setItem(`fluentflow_progress_${currentUser.id}`, JSON.stringify(updatedState));
-    } catch (e) {
-      console.error("Failed to save progress:", e);
-    }
-  }, [gameState.score, currentUser.id, gameState.history]);
+      localStorage.setItem(`fluentflow_progress_${currentUser.id}`, JSON.stringify(gameState));
+    } catch (e) {}
+  }, [gameState, currentUser.id]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -103,6 +83,7 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
   useEffect(() => {
     const initAudio = async () => {
       try {
+        if (audioContextRef.current) return;
         const ctx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
         const analyser = ctx.createAnalyser();
         analyser.fftSize = 256;
@@ -116,39 +97,47 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
     };
     initAudio();
     return () => { 
-      if (audioContextRef.current) audioContextRef.current.close(); 
+      if (audioContextRef.current) audioContextRef.current.close();
     };
   }, []);
 
   const ensureAudioContext = async () => {
-    if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
-      try { await audioContextRef.current.resume(); } catch (e) { console.error(e); }
+    if (audioContextRef.current?.state === 'suspended') {
+      await audioContextRef.current.resume();
     }
   };
 
-  const speakText = async (text: string) => {
-    await ensureAudioContext();
-    const context = audioContextRef.current;
-    const analyser = audioAnalyserRef.current;
-    if (!context || !analyser) return;
-    const currentId = ++speechRequestIdRef.current;
+  const stopAllSpeech = useCallback(() => {
+    speechRequestIdRef.current++; 
     if (sourceNodeRef.current) {
       try { sourceNodeRef.current.stop(); } catch (e) {}
       sourceNodeRef.current = null;
     }
+    setIsAvatarSpeaking(false);
+  }, []);
+
+  const speakText = async (text: string) => {
+    if (!text) return;
+    await ensureAudioContext();
+    const context = audioContextRef.current;
+    const analyser = audioAnalyserRef.current;
+    if (!context || !analyser) return;
+    
+    stopAllSpeech();
+    const currentId = speechRequestIdRef.current;
+    
     setIsAvatarSpeaking(true);
     try {
       let buffer = audioCacheRef.current.get(text);
       if (!buffer) {
         const base64 = await generateSpeech(text);
-        if (currentId !== speechRequestIdRef.current || !base64) {
-          setIsAvatarSpeaking(false);
-          return;
-        }
+        if (currentId !== speechRequestIdRef.current) return;
+        if (!base64) { setIsAvatarSpeaking(false); return; }
         const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
         buffer = decodeRawPCM(bytes, context);
         audioCacheRef.current.set(text, buffer);
       }
+      
       const source = context.createBufferSource();
       source.buffer = buffer;
       source.connect(analyser);
@@ -156,82 +145,62 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
       sourceNodeRef.current = source;
       source.start(0);
     } catch (e) { 
-      console.error("Speech synthesis failed:", e);
       setIsAvatarSpeaking(false); 
     }
   };
 
-  useEffect(() => {
-    let timer: number;
-    if (status === AppStatus.READY && phrases.length > 0 && appMode !== 'conversation') {
-      const currentPhrase = phrases[currentPhraseIndex];
-      if (currentPhrase) {
-        timer = window.setTimeout(() => speakText(currentPhrase.english), 500);
-      }
-    }
-    return () => { if (timer) window.clearTimeout(timer); };
-  }, [phrases, currentPhraseIndex, appMode, status]);
-
   const loadData = useCallback(async (mode: AppMode, topicOverride?: string) => {
     setStatus(AppStatus.LOADING_PHRASES);
     audioCacheRef.current.clear();
-    if (sourceNodeRef.current) {
-      try { sourceNodeRef.current.stop(); } catch (e) {}
-      sourceNodeRef.current = null;
-    }
+    stopAllSpeech();
+
     try {
       let loadedPhrases: Phrase[] = [];
       if (mode === 'course') {
         loadedPhrases = getCoursePhrases(gameState.courseProgressIndex, 5);
       } else if (mode === 'practice') {
-        const topic = topicOverride || selectedTopic || TOPICS[Math.floor(Math.random() * TOPICS.length)];
+        const topic = topicOverride || selectedTopic || TOPICS[0];
         loadedPhrases = await generatePhrases(topic, 'medium', 5);
       } else if (mode === 'words') {
         loadedPhrases = await generateWords('General', 'medium', 8);
       } else if (mode === 'conversation') {
-        if (chatHistory.length === 0) {
-          const welcome = `Hello ${currentUser.name}! I'm EVE. Ready to talk?`;
-          setChatHistory([{ role: 'model', text: welcome, translation: `Olá ${currentUser.name}! Eu sou a EVE. Pronto para falar?` }]);
-          speakText(welcome);
-        }
+        setChatHistory([]); 
+        const welcome = `Hello ${currentUser.name}! I'm EVE. How are you today?`;
+        setChatHistory([{ role: 'model', text: welcome, translation: `Olá ${currentUser.name}! Eu sou a EVE. Como você está hoje?` }]);
+        speakText(welcome);
       }
       setPhrases(loadedPhrases);
       setCurrentPhraseIndex(0);
       setResult(null);
       setStatus(AppStatus.READY);
     } catch (e) {
-      const fallback = getRandomPhrases(5);
-      setPhrases(fallback);
+      setPhrases(getRandomPhrases(5));
       setStatus(AppStatus.READY);
     }
-  }, [gameState.courseProgressIndex, chatHistory.length, currentUser.name, selectedTopic]);
+  }, [gameState.courseProgressIndex, currentUser.name, selectedTopic, stopAllSpeech]);
 
   useEffect(() => { 
     if (appMode) loadData(appMode); 
   }, [appMode, loadData]);
 
   const handleAudioRecorded = async (base64: string, mimeType: string) => {
+    if (!base64) return;
     await ensureAudioContext();
     setStatus(AppStatus.PROCESSING_AUDIO);
+    
     try {
       if (appMode === 'conversation') {
         const response = await processConversationTurn(base64, mimeType, chatHistory);
-        if (response.isSilent) {
-          setStatus(AppStatus.READY);
-          return;
-        }
+        if (response.isSilent) { setStatus(AppStatus.READY); return; }
         setChatHistory(prev => [...prev, 
           { role: 'user', text: response.transcription },
           { role: 'model', text: response.response, translation: response.translation, feedback: response.feedback, improvement: response.improvement }
         ]);
-        setGameState(prev => ({ ...prev, score: prev.score + 15 })); 
+        setGameState(prev => ({ ...prev, score: prev.score + 10 })); 
         speakText(response.response);
         setStatus(AppStatus.READY);
       } else {
         const res = await validatePronunciation(base64, mimeType, phrases[currentPhraseIndex].english);
-        if (!(res.isCorrect && res.score > 30 && res.transcript && res.transcript.trim().length > 0)) {
-          res.isCorrect = false; res.score = 0; res.feedback = "Não ouvi sua voz com clareza. Tente novamente!";
-        }
         setResult(res);
         if (res.isCorrect) {
           setGameState(prev => ({ 
@@ -244,204 +213,119 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
         setStatus(AppStatus.FEEDBACK);
       }
     } catch (e) {
-      console.error("Audio recording processing failed:", e);
       setStatus(AppStatus.READY);
-    }
-  };
-
-  const nextPhrase = () => {
-    ensureAudioContext();
-    const nextIdx = currentPhraseIndex + 1;
-    if (nextIdx < phrases.length) {
-      setCurrentPhraseIndex(nextIdx);
-      setResult(null);
-      setStatus(AppStatus.READY);
-    } else {
-      loadData(appMode!);
     }
   };
 
   const handleModeChange = (mode: AppMode | null) => {
-    ensureAudioContext();
-    if (mode === 'practice') {
-      setShowTopicSelector(true);
-    } else {
-      setAppMode(mode);
-      setSelectedTopic(null);
-    }
+    stopAllSpeech();
+    if (mode === 'practice') setShowTopicSelector(true);
+    else setAppMode(mode);
     setShowSettings(false);
   };
 
-  const handleTopicSelect = (topic: string) => {
-    setSelectedTopic(topic);
-    setAppMode('practice');
-    setShowTopicSelector(false);
-  };
-
-  const handleProfileUpdate = (data: any) => {
-    const newRole = (currentUser.role === 'guest' && data.name && data.name !== 'Visitante') ? 'user' : currentUser.role;
-    onUpdateUser({ ...currentUser, ...data, role: newRole });
-    setShowProfileSetup(false);
-  };
-
   return (
-    <div className="flex flex-col h-screen bg-[#F8FAFC] overflow-hidden font-sans">
-      <header className="bg-white/80 backdrop-blur-md border-b px-5 py-3 flex items-center justify-between z-30 shrink-0">
-        <div className="flex items-center gap-3">
+    <div className="flex flex-col h-[100dvh] bg-[#F8FAFC] overflow-hidden font-sans">
+      <header className="bg-white/80 backdrop-blur-md border-b px-4 sm:px-6 py-2.5 flex items-center justify-between z-30 shrink-0">
+        <div className="flex items-center gap-2 sm:gap-3">
           <button 
-            onClick={() => { ensureAudioContext(); setShowProfileSetup(true); }}
-            className={`group relative w-10 h-10 rounded-xl ${currentUser.avatarColor} flex items-center justify-center text-white font-bold text-sm shadow-inner active:scale-95 transition-all hover:ring-4 hover:ring-indigo-50`}
-            title="Configurações de Perfil"
+            onClick={() => setShowProfileSetup(true)}
+            className={`w-9 h-9 sm:w-10 sm:h-10 rounded-xl ${currentUser.avatarColor} flex items-center justify-center text-white font-bold text-xs sm:text-sm shadow-inner active:scale-95 transition-all`}
           >
             {currentUser.name[0] || 'V'}
           </button>
           <div className="flex flex-col">
-            <h1 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
-              FluentFlow
-              <span className="text-[10px] text-slate-400 font-normal truncate max-w-[80px]">| {currentUser.name || 'Visitante'}</span>
-            </h1>
-            <span className="text-[9px] font-black text-indigo-500 uppercase tracking-widest">
-              {appMode ? (appMode === 'practice' && selectedTopic ? selectedTopic : appMode) : 'Escolha um Modo'}
+            <h1 className="text-xs sm:text-sm font-bold text-slate-800 leading-tight">FluentFlow</h1>
+            <span className="text-[8px] sm:text-[9px] font-black text-indigo-500 uppercase tracking-widest truncate max-w-[100px]">
+              {appMode || 'Escolha um Modo'}
             </span>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1">
           {appMode && (
-            <button onClick={() => handleModeChange(null)} className="p-2 text-slate-400 hover:text-indigo-600 rounded-lg transition-colors" title="Voltar ao Início">
+            <button onClick={() => setAppMode(null)} className="p-2 text-slate-400 hover:text-indigo-600 transition-colors">
               <Home className="w-4 h-4" />
             </button>
           )}
-          <button onClick={() => { ensureAudioContext(); setShowHistory(true); }} className="p-2 text-slate-400 hover:text-indigo-600 rounded-lg transition-colors" title="Ver Progresso">
+          <button onClick={() => setShowHistory(true)} className="p-2 text-slate-400 hover:text-indigo-600 transition-colors">
             <BarChart className="w-4 h-4" />
           </button>
-          <button onClick={() => { ensureAudioContext(); setShowSettings(!showSettings); }} className="p-2 text-slate-400 hover:text-indigo-600 rounded-lg transition-colors">
+          <button onClick={() => setShowSettings(!showSettings)} className="p-2 text-slate-400 hover:text-indigo-600 transition-colors">
             <Settings className="w-4 h-4" />
           </button>
         </div>
       </header>
 
-      {showSettings && (
-        <div className="absolute top-14 right-5 w-60 bg-white rounded-2xl shadow-2xl border p-2 z-50 animate-fade-in-up">
-          <p className="px-3 py-2 text-[10px] font-black text-slate-300 uppercase tracking-widest">Opções</p>
-          <button onClick={() => handleModeChange(null)} className="w-full text-left p-3 rounded-xl text-sm font-semibold flex items-center gap-3 text-slate-600 hover:bg-slate-50">
-             <Home className="w-4 h-4" /> Início / Modos
-          </button>
-          
-          <div className="border-t my-1"></div>
-          <button 
-            onClick={() => setIsAvatarEnabled(!isAvatarEnabled)} 
-            className="w-full text-left p-3 rounded-xl text-sm font-semibold flex items-center justify-between text-slate-600 hover:bg-slate-50"
-          >
-             <div className="flex items-center gap-3">
-               {isAvatarEnabled ? <Monitor className="w-4 h-4" /> : <MonitorOff className="w-4 h-4 text-slate-300" />}
-               <span>Avatar EVE 3D</span>
-             </div>
-             {isAvatarEnabled ? <ToggleRight className="w-5 h-5 text-indigo-600" /> : <ToggleLeft className="w-5 h-5 text-slate-300" />}
-          </button>
-          <div className="border-t my-1"></div>
-
-          <button onClick={() => { setShowProfileSetup(true); setShowSettings(false); }} className="w-full text-left p-3 rounded-xl text-sm font-semibold flex items-center gap-3 text-slate-600 hover:bg-slate-50">
-             <User className="w-4 h-4" /> Editar Perfil
-          </button>
-          <button onClick={onLogout} className="w-full text-left p-3 rounded-xl text-sm font-bold text-rose-500 mt-2 border-t">Sair</button>
-        </div>
-      )}
-
-      <main className="flex-1 flex flex-col min-h-0 relative max-w-lg mx-auto w-full">
+      <main className="flex-1 flex flex-col min-h-0 relative max-w-2xl mx-auto w-full px-4 sm:px-6 overflow-hidden">
         {!appMode ? (
           <ModeSelector userName={currentUser.name || "Visitante"} onSelectMode={handleModeChange} />
         ) : (
           <>
-            <div className="shrink-0 p-4 pb-0 z-20">
+            <div className="shrink-0 pt-4 pb-2">
               <ScoreBoard state={gameState} totalPhrases={1000} />
               
-              <div className={`transition-all duration-500 overflow-hidden relative mt-2 pointer-events-none ${isAvatarEnabled ? 'h-48' : 'h-24'}`}>
+              <div className={`transition-all duration-500 flex items-center justify-center ${isAvatarEnabled ? 'h-[180px] sm:h-[260px] md:h-[300px]' : 'h-10'}`}>
                 {isAvatarEnabled ? (
                   <Avatar3D isSpeaking={isAvatarSpeaking} isRecording={status === AppStatus.RECORDING} audioAnalyser={analyserForAvatar} />
                 ) : (
-                  <div className="w-full h-full flex flex-col items-center justify-center gap-2 animate-fade-in">
-                    <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center text-slate-400">
-                      <Radio className={`w-6 h-6 ${isAvatarSpeaking ? 'animate-pulse text-indigo-400' : ''}`} />
-                    </div>
-                    <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">Modo Performance Ativo</span>
+                  <div className="bg-white/40 backdrop-blur-sm px-4 py-2 rounded-2xl border border-white/60">
+                    <Radio className={`w-4 h-4 ${isAvatarSpeaking ? 'text-indigo-500 animate-pulse' : 'text-slate-300'}`} />
                   </div>
                 )}
-                
-                <div className="absolute top-2 left-0 right-0 flex justify-center">
-                   {(isAvatarSpeaking || status === AppStatus.RECORDING) && (
-                     <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-widest animate-fade-in bg-white/50 backdrop-blur-sm border border-white/80 shadow-sm ${
-                       status === AppStatus.RECORDING ? 'text-red-500' : 'text-cyan-600'
-                     }`}>
-                       <Radio className={`w-3 h-3 ${status === AppStatus.RECORDING ? 'animate-pulse' : ''}`} />
-                       {status === AppStatus.RECORDING ? 'Ouvindo...' : 'Falando...'}
-                     </div>
-                   )}
-                </div>
               </div>
             </div>
 
-            <div className="flex-1 flex flex-col min-h-0 overflow-hidden px-4 py-2 relative z-10">
+            <div className="flex-1 flex flex-col min-h-0 overflow-hidden relative z-10 pb-4">
               {appMode === 'conversation' ? (
-                <div className="flex-1 overflow-y-auto space-y-4 custom-scrollbar pr-1 pb-4">
+                <div className="flex-1 overflow-y-auto space-y-3 custom-scrollbar pr-1">
                   {chatHistory.map((msg, i) => (
                     <div key={i} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'} animate-fade-in-up`}>
-                      <div className={`group relative px-4 py-3 rounded-2xl max-w-[85%] text-sm shadow-sm ${msg.role === 'user' ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-white text-slate-700 rounded-tl-none border border-slate-100'}`}>
+                      <div className={`px-4 py-2.5 rounded-2xl max-w-[90%] text-sm shadow-sm ${msg.role === 'user' ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-white text-slate-700 rounded-tl-none border border-slate-100'}`}>
                         {msg.text}
-                        {msg.role === 'model' && (
-                          <button onClick={() => speakText(msg.text)} className="absolute -right-8 top-1 p-1.5 text-slate-300 hover:text-indigo-500 transition-colors">
-                            <Volume2 className="w-4 h-4" />
-                          </button>
-                        )}
                       </div>
-                      {msg.role === 'model' && (
-                        <div className="mt-2 space-y-2 w-[90%]">
-                          <p className="text-[10px] text-slate-400 italic">"{msg.translation}"</p>
-                        </div>
+                      {msg.role === 'model' && msg.translation && (
+                        <p className="mt-1 px-1 text-[10px] text-slate-400 italic">"{msg.translation}"</p>
                       )}
                     </div>
                   ))}
-                  <div ref={messagesEndRef} />
+                  <div ref={messagesEndRef} className="h-2" />
                 </div>
               ) : (
                 <div className="flex-1 flex flex-col justify-center">
                   {status === AppStatus.LOADING_PHRASES ? (
-                    <div className="flex flex-col items-center justify-center gap-4 py-10">
-                        <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
-                        <p className="text-xs font-bold text-slate-300 uppercase tracking-widest">Carregando...</p>
+                    <div className="flex flex-col items-center gap-3">
+                        <Loader2 className="w-6 h-6 animate-spin text-indigo-300" />
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Gerando frases...</p>
                     </div>
                   ) : status === AppStatus.FEEDBACK && result ? (
-                    <div className="bg-white rounded-[32px] p-6 shadow-xl border border-slate-50 flex flex-col items-center animate-fade-in-up mx-2">
-                      <div className={`w-12 h-12 rounded-2xl flex items-center justify-center mb-3 ${result.score > 30 ? 'bg-emerald-50 text-emerald-500' : 'bg-rose-50 text-rose-500'}`}>
-                          {result.score > 30 ? <CheckCircle2 /> : <AlertCircle />}
+                    <div className="bg-white rounded-[32px] p-6 shadow-xl border border-slate-50 flex flex-col items-center animate-fade-in-up">
+                      <div className={`w-12 h-12 rounded-2xl flex items-center justify-center mb-3 ${result.score > 40 ? 'bg-emerald-50 text-emerald-500' : 'bg-rose-50 text-rose-500'}`}>
+                          {result.score > 40 ? <CheckCircle2 /> : <AlertCircle />}
                       </div>
                       <h2 className="text-2xl font-black text-slate-800">{result.score}%</h2>
                       <p className="text-center text-slate-500 text-xs mt-2 mb-6 leading-relaxed">{result.feedback}</p>
-                      {result.transcript && <p className="text-[10px] text-slate-300 italic mb-4">Ouvi: "{result.transcript}"</p>}
-                      <button onClick={nextPhrase} className="w-full py-3 bg-indigo-600 text-white font-bold rounded-xl text-sm shadow-lg shadow-indigo-100">Continuar</button>
+                      <button onClick={() => { setStatus(AppStatus.READY); setCurrentPhraseIndex(i => (i + 1) % phrases.length); setResult(null); }} className="w-full py-3 bg-indigo-600 text-white font-bold rounded-xl text-sm shadow-lg hover:bg-indigo-700 transition-all active:scale-95">Próxima</button>
                     </div>
-                  ) : (
-                    phrases.length > 0 && (
-                      <PhraseCard 
-                        phrase={phrases[currentPhraseIndex]} 
-                        onSpeak={() => speakText(phrases[currentPhraseIndex].english)} 
-                        isSpeaking={isAvatarSpeaking} 
-                      />
-                    )
-                  )}
+                  ) : phrases.length > 0 ? (
+                    <PhraseCard 
+                      phrase={phrases[currentPhraseIndex]} 
+                      onSpeak={() => speakText(phrases[currentPhraseIndex].english)} 
+                      isSpeaking={isAvatarSpeaking} 
+                    />
+                  ) : null}
                 </div>
               )}
             </div>
 
-            <div className="bg-white rounded-t-[32px] shadow-[0_-10px_40px_rgba(0,0,0,0.02)] p-6 pb-10 z-30 shrink-0 border-t border-slate-50">
-              <div className="flex flex-col items-center">
-                <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest mb-2">
-                  {status === AppStatus.PROCESSING_AUDIO ? 'EVE está analisando...' : 'Toque para falar'}
+            <div className="bg-white rounded-t-[32px] shadow-sm p-4 sm:p-6 pb-6 z-30 shrink-0 border-t border-slate-50">
+              <div className="flex flex-col items-center max-w-xs mx-auto">
+                <p className="text-[9px] font-black text-slate-300 uppercase tracking-widest mb-2">
+                  {status === AppStatus.PROCESSING_AUDIO ? 'Processando...' : 'Toque no microfone para falar'}
                 </p>
                 <AudioRecorder 
                   onAudioRecorded={handleAudioRecorded} 
                   isProcessing={status === AppStatus.PROCESSING_AUDIO} 
                   disabled={isAvatarSpeaking || status === AppStatus.LOADING_PHRASES} 
-                  ref={null} 
                 />
               </div>
             </div>
@@ -450,14 +334,19 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
       </main>
 
       {showHistory && <ProgressHistory state={gameState} onClose={() => setShowHistory(false)} />}
-      {showTopicSelector && <TopicSelector onSelect={handleTopicSelect} onClose={() => setShowTopicSelector(false)} />}
-      {showProfileSetup && (
-        <ProfileSetup 
-          initialProfile={currentUser} 
-          onSave={handleProfileUpdate} 
-          onCancel={() => setShowProfileSetup(false)} 
-          existingNames={existingUsers.filter(u => u.id !== currentUser.id).map(u => u.name)}
-        />
+      {showTopicSelector && <TopicSelector onSelect={(t) => { setSelectedTopic(t); setAppMode('practice'); setShowTopicSelector(false); }} onClose={() => setShowTopicSelector(false)} />}
+      {showProfileSetup && <ProfileSetup initialProfile={currentUser} onSave={(u) => { onUpdateUser({...currentUser, ...u}); setShowProfileSetup(false); }} onCancel={() => setShowProfileSetup(false)} />}
+      {showSettings && (
+        <div className="absolute top-14 right-4 w-56 bg-white rounded-2xl shadow-2xl border p-2 z-50 animate-fade-in-up">
+          <button onClick={() => setIsAvatarEnabled(!isAvatarEnabled)} className="w-full text-left p-3 rounded-xl text-sm font-semibold flex items-center justify-between text-slate-600 hover:bg-slate-50">
+             <div className="flex items-center gap-3">
+               {isAvatarEnabled ? <Monitor className="w-4 h-4 text-indigo-500" /> : <MonitorOff className="w-4 h-4 text-slate-300" />}
+               <span>Avatar EVE</span>
+             </div>
+             {isAvatarEnabled ? <ToggleRight className="w-5 h-5 text-indigo-600" /> : <ToggleLeft className="w-5 h-5 text-slate-300" />}
+          </button>
+          <button onClick={onLogout} className="w-full text-left p-3 rounded-xl text-sm font-bold text-rose-500 mt-1 border-t pt-3">Sair da Conta</button>
+        </div>
       )}
     </div>
   );
@@ -465,12 +354,8 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
 
 const App: React.FC = () => {
   const [users, setUsers] = useState<UserProfile[]>(() => {
-    try {
-      const saved = localStorage.getItem(USERS_KEY);
-      return saved ? JSON.parse(saved) : [];
-    } catch (e) {
-      return [];
-    }
+    const saved = localStorage.getItem(USERS_KEY);
+    return saved ? JSON.parse(saved) : [];
   });
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
 
@@ -478,27 +363,17 @@ const App: React.FC = () => {
     localStorage.setItem(USERS_KEY, JSON.stringify(users));
   }, [users]);
 
-  const handleLogin = (user: UserProfile) => {
-    setUsers(prev => prev.some(u => u.id === user.id) ? prev : [...prev, user]);
-    setCurrentUser(user);
-  };
-
-  const handleDeleteUser = (userId: string) => {
-    setUsers(prev => prev.filter(u => u.id !== userId));
-    localStorage.removeItem(`fluentflow_progress_${userId}`);
-  };
-
-  if (currentUser?.role === 'admin') {
-    return <AdminDashboard users={users} onDeleteUser={handleDeleteUser} onLogout={() => setCurrentUser(null)} />;
+  if (!currentUser) {
+    return (
+      <LoginScreen 
+        users={users} 
+        onLogin={setCurrentUser} 
+        onCreateNew={() => setCurrentUser({ id: `u_${Date.now()}`, name: '', avatarColor: 'bg-indigo-500', joinedDate: Date.now(), role: 'user' })} 
+      />
+    );
   }
 
-  return !currentUser ? (
-    <LoginScreen 
-      users={users} 
-      onLogin={handleLogin} 
-      onCreateNew={() => setCurrentUser({ id: `u_${Date.now()}`, name: '', avatarColor: 'bg-indigo-500', joinedDate: Date.now(), role: 'user' })} 
-    />
-  ) : (
+  return (
     <AppContent 
       currentUser={currentUser} 
       onLogout={() => setCurrentUser(null)} 

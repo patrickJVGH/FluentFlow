@@ -1,8 +1,5 @@
 
-import React, { useRef, useEffect, useState, useMemo } from 'react';
-import { Canvas, useFrame } from '@react-three/fiber';
-import { Float, ContactShadows, PerspectiveCamera, Environment } from '@react-three/drei';
-import * as THREE from 'three';
+import React, { useEffect, useState, useRef } from 'react';
 
 interface AvatarProps {
   isSpeaking: boolean;
@@ -10,182 +7,159 @@ interface AvatarProps {
   audioAnalyser?: AnalyserNode | null;
 }
 
-const EveModel = ({ isSpeaking, isRecording, audioAnalyser }: AvatarProps) => {
-  const groupRef = useRef<THREE.Group>(null);
-  const headRef = useRef<THREE.Group>(null);
-  const bodyRef = useRef<THREE.Mesh>(null);
-  const leftEyeRef = useRef<THREE.Mesh>(null);
-  const rightEyeRef = useRef<THREE.Mesh>(null);
-  const leftArmRef = useRef<THREE.Mesh>(null);
-  const rightArmRef = useRef<THREE.Mesh>(null);
-  
-  const dataArray = useMemo(() => new Uint8Array(128), []);
+export const Avatar3D: React.FC<AvatarProps> = ({ isSpeaking, isRecording, audioAnalyser }) => {
+  const [pulseScale, setPulseScale] = useState(1);
   const [blink, setBlink] = useState(false);
-  const eyeIntensityRef = useRef(4);
+  const requestRef = useRef<number>();
+  const pulseVelocity = useRef(0);
 
+  // Ciclo de piscar
   useEffect(() => {
+    let timeout: any;
     const blinkLoop = () => {
-      const timeout = setTimeout(() => {
+      timeout = setTimeout(() => {
         setBlink(true);
-        setTimeout(() => setBlink(false), 120);
+        setTimeout(() => setBlink(false), 150);
         blinkLoop();
-      }, 3000 + Math.random() * 5000);
-      return () => clearTimeout(timeout);
+      }, 3000 + Math.random() * 4000);
     };
     blinkLoop();
+    return () => clearTimeout(timeout);
   }, []);
 
-  useFrame((state) => {
-    const t = state.clock.getElapsedTime();
-    let volume = 0;
-
-    if (isSpeaking && audioAnalyser) {
-      audioAnalyser.getByteFrequencyData(dataArray);
-      let sum = 0;
-      const range = 20; 
-      for (let i = 0; i < range; i++) sum += dataArray[i];
-      volume = sum / range / 255;
-    }
-
-    const baseIntensity = isRecording ? 10 : 4.5;
-    const targetIntensity = baseIntensity + volume * 15;
-    eyeIntensityRef.current = THREE.MathUtils.lerp(eyeIntensityRef.current, targetIntensity, 0.2);
-
-    if (leftEyeRef.current && rightEyeRef.current) {
-      const eyeYScale = blink ? 0.05 : 1 + volume * 0.5;
-      leftEyeRef.current.scale.y = THREE.MathUtils.lerp(leftEyeRef.current.scale.y, eyeYScale, 0.4);
-      rightEyeRef.current.scale.y = THREE.MathUtils.lerp(rightEyeRef.current.scale.y, eyeYScale, 0.4);
+  // Animação reativa ao áudio (Eyes + Mouth)
+  useEffect(() => {
+    if (!audioAnalyser) return;
+    const dataArray = new Uint8Array(audioAnalyser.frequencyBinCount);
+    
+    const animate = () => {
+      let targetScale = 1;
       
-      const eyeXScale = 1 + volume * 0.2;
-      leftEyeRef.current.scale.x = THREE.MathUtils.lerp(leftEyeRef.current.scale.x, eyeXScale, 0.3);
-      rightEyeRef.current.scale.x = THREE.MathUtils.lerp(rightEyeRef.current.scale.x, eyeXScale, 0.3);
+      if (isSpeaking) {
+        audioAnalyser.getByteFrequencyData(dataArray);
+        let sum = 0;
+        // Analisando frequências médias para melhor resposta labial
+        const binsToAnalyze = 15; 
+        for (let i = 0; i < binsToAnalyze; i++) sum += dataArray[i];
+        const average = sum / binsToAnalyze;
+        targetScale = 1 + (average / 140) * 0.8;
+      }
 
-      const color = isRecording ? new THREE.Color("#FF2052") : new THREE.Color("#00F5FF");
-      // @ts-ignore
-      leftEyeRef.current.material.emissive.lerp(color, 0.1);
-      // @ts-ignore
-      rightEyeRef.current.material.emissive.lerp(color, 0.1);
-      // @ts-ignore
-      leftEyeRef.current.material.emissiveIntensity = eyeIntensityRef.current;
-      // @ts-ignore
-      rightEyeRef.current.material.emissiveIntensity = eyeIntensityRef.current;
-    }
+      // Spring physics simplificada para animação fluida
+      const stiffness = 0.2;
+      const damping = 0.7;
+      const force = (targetScale - pulseScale) * stiffness;
+      pulseVelocity.current = (pulseVelocity.current + force) * damping;
+      setPulseScale(prev => prev + pulseVelocity.current);
 
-    if (headRef.current) {
-      headRef.current.position.y = 1.2 + Math.sin(t * 1.5) * 0.06;
-      headRef.current.rotation.y = Math.sin(t * 0.4) * 0.12;
-      headRef.current.rotation.x = Math.cos(t * 0.6) * 0.05 + (volume * -0.15);
-    }
+      requestRef.current = requestAnimationFrame(animate);
+    };
 
-    if (bodyRef.current) {
-      bodyRef.current.position.y = -0.7 + Math.sin(t * 1.2) * 0.04;
-    }
+    requestRef.current = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(requestRef.current!);
+  }, [isSpeaking, audioAnalyser, pulseScale]);
 
-    if (leftArmRef.current && rightArmRef.current) {
-      const armBob = Math.sin(t * 2) * 0.05 + (volume * 0.2);
-      leftArmRef.current.position.y = -0.4 + armBob;
-      rightArmRef.current.position.y = -0.4 + armBob;
-      leftArmRef.current.rotation.z = 0.25 + Math.sin(t * 0.8) * 0.1;
-      rightArmRef.current.rotation.z = -0.25 - Math.sin(t * 0.8) * 0.1;
-    }
-  });
+  const mainColor = isRecording ? "#FF4757" : "#00F5FF";
+  const softColor = isRecording ? "rgba(255, 71, 87, 0.25)" : "rgba(0, 245, 255, 0.25)";
 
   return (
-    <group ref={groupRef} dispose={null}>
-      {/* CABEÇA - Egg Shell */}
-      <group ref={headRef}>
-        <mesh castShadow scale={[1, 1.05, 1]}>
-          <sphereGeometry args={[0.9, 64, 64]} />
-          <meshPhysicalMaterial 
-            color="#ffffff" 
-            roughness={0.03} 
-            metalness={0.05} 
-            clearcoat={1} 
-            clearcoatRoughness={0.01}
+    <div className="w-full h-full flex items-center justify-center relative overflow-visible select-none pointer-events-none p-4 sm:p-8">
+      <svg 
+        viewBox="0 0 400 500" 
+        preserveAspectRatio="xMidYMid meet"
+        className="max-h-full max-w-full drop-shadow-2xl overflow-visible"
+        style={{ 
+          animation: 'eve-float 5s ease-in-out infinite',
+          willChange: 'transform'
+        }}
+      >
+        <defs>
+          <filter id="eve-glow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="5" result="blur" />
+            <feComposite in="SourceGraphic" in2="blur" operator="over" />
+          </filter>
+          
+          <linearGradient id="bodyGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stopColor="#FFFFFF" />
+            <stop offset="100%" stopColor="#F1F5F9" />
+          </linearGradient>
+
+          <style>
+            {`
+              @keyframes eve-float {
+                0%, 100% { transform: translateY(0px) rotate(0deg); }
+                33% { transform: translateY(-10px) rotate(1deg); }
+                66% { transform: translateY(-5px) rotate(-1deg); }
+              }
+              .eve-spring { transition: all 0.1s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+            `}
+          </style>
+        </defs>
+
+        {/* BRAÇOS */}
+        <g opacity="0.8">
+          <path d="M70,230 Q50,230 55,290 Q60,350 80,350 Q100,350 95,290 Q90,230 70,230" fill="white" stroke="#E2E8F0" strokeWidth="1" />
+          <path d="M330,230 Q350,230 345,290 Q340,350 320,350 Q300,350 305,290 Q310,230 330,230" fill="white" stroke="#E2E8F0" strokeWidth="1" />
+        </g>
+
+        {/* CORPO */}
+        <path d="M200,190 C130,190 115,280 135,400 C150,470 200,490 200,490 C200,490 250,470 265,400 C285,280 270,190 200,190" fill="url(#bodyGrad)" stroke="#E2E8F0" strokeWidth="1" />
+
+        {/* PEITO / NÚCLEO REATIVO */}
+        <g transform="translate(200, 310)">
+          <circle r="20" fill="white" stroke="#E2E8F0" strokeWidth="0.5" />
+          <circle r={12 * (0.9 + (pulseScale-1)*0.2)} fill={mainColor} filter="url(#eve-glow)" opacity={0.8} />
+          <circle r={25 * pulseScale} fill={softColor} />
+        </g>
+
+        {/* CABEÇA */}
+        <g transform={`translate(0, ${isSpeaking ? (pulseScale - 1) * -8 : 0})`}>
+          <ellipse cx="200" cy="115" rx="100" ry="85" fill="white" stroke="#E2E8F0" strokeWidth="1.5" />
+          
+          {/* VISOR */}
+          <rect 
+            x="115" y="65" width="170" height="95" rx="47" 
+            fill="#0F172A" 
+            style={{ 
+              transformBox: 'fill-box', 
+              transformOrigin: 'center',
+              transform: `scale(${1 + (pulseScale - 1) * 0.05})` 
+            }} 
           />
-        </mesh>
-        
-        {/* VISOR - A single front face-plate */}
-        {/* We use a flattened sphere segment positioned right on the face */}
-        <mesh position={[0, 0, 0.4]} scale={[1.4, 0.85, 0.5]}>
-          <sphereGeometry args={[0.6, 48, 48]} />
-          <meshPhysicalMaterial 
-            color="#050505" 
-            roughness={0.02}
-            metalness={0.9}
-            reflectivity={1}
-            clearcoat={1}
+
+          {/* OLHOS DINÂMICOS */}
+          <g filter="url(#eve-glow)">
+            <ellipse 
+              cx="165" cy="100" 
+              rx={15 + (pulseScale - 1) * 5} 
+              ry={blink ? 1 : 12 + (pulseScale - 1) * 8} 
+              fill={mainColor} 
+              className="eve-spring"
+            />
+            <ellipse 
+              cx="235" cy="100" 
+              rx={15 + (pulseScale - 1) * 5} 
+              ry={blink ? 1 : 12 + (pulseScale - 1) * 8} 
+              fill={mainColor} 
+              className="eve-spring"
+            />
+          </g>
+
+          {/* BOCA ELÁSTICA (REATIVIDADE MÁXIMA) */}
+          <path 
+            d={`M180,135 Q200,${135 + (pulseScale - 1) * 60} 220,135`} 
+            stroke={mainColor} 
+            strokeWidth={3 + (pulseScale - 1) * 5} 
+            fill="none" 
+            strokeLinecap="round"
+            filter="url(#eve-glow)"
+            style={{ 
+              opacity: (isSpeaking || pulseScale > 1.01) ? 1 : 0.15,
+              transition: 'opacity 0.2s ease'
+            }}
           />
-        </mesh>
-
-        {/* EYES - Inside the black visor area */}
-        <group position={[0, 0.04, 0.68]}>
-          <mesh ref={leftEyeRef} position={[-0.26, 0, 0]}>
-            <sphereGeometry args={[0.12, 32, 32]} />
-            <meshStandardMaterial 
-              color="#00F5FF" 
-              emissive="#00F5FF" 
-              emissiveIntensity={4} 
-            />
-          </mesh>
-          <mesh ref={rightEyeRef} position={[0.26, 0, 0]}>
-            <sphereGeometry args={[0.12, 32, 32]} />
-            <meshStandardMaterial 
-              color="#00F5FF" 
-              emissive="#00F5FF" 
-              emissiveIntensity={4} 
-            />
-          </mesh>
-        </group>
-      </group>
-
-      {/* BODY - Tapered Oval Body */}
-      <mesh ref={bodyRef} position={[0, -0.7, 0]} scale={[1, 1.85, 1]} castShadow>
-        <sphereGeometry args={[0.9, 64, 64]} />
-        <meshPhysicalMaterial 
-          color="#ffffff" 
-          roughness={0.03} 
-          metalness={0.02} 
-          clearcoat={1}
-        />
-      </mesh>
-
-      {/* ARMS - Magnetic Floating Fins */}
-      <mesh ref={leftArmRef} position={[-1.3, -0.4, 0]} rotation={[0, 0, 0.15]}>
-        <capsuleGeometry args={[0.16, 0.55, 12, 24]} />
-        <meshPhysicalMaterial color="#ffffff" roughness={0.05} clearcoat={1} />
-      </mesh>
-      <mesh ref={rightArmRef} position={[1.3, -0.4, 0]} rotation={[0, 0, -0.15]}>
-        <capsuleGeometry args={[0.16, 0.55, 12, 24]} />
-        <meshPhysicalMaterial color="#ffffff" roughness={0.05} clearcoat={1} />
-      </mesh>
-    </group>
+        </g>
+      </svg>
+    </div>
   );
 };
-
-export const Avatar3D = React.memo((props: AvatarProps) => (
-  <div className="w-full h-full relative">
-    <Canvas 
-      shadows 
-      dpr={[1, 2]} 
-      gl={{ antialias: true, alpha: true }}
-    >
-      <PerspectiveCamera makeDefault position={[0, 0.4, 8.2]} fov={24} />
-      <ambientLight intensity={0.9} />
-      <spotLight position={[10, 20, 10]} angle={0.2} penumbra={1} intensity={6} castShadow />
-      <pointLight position={[-10, 5, -10]} intensity={3} color="#4f46e5" />
-      <directionalLight position={[0, 5, 10]} intensity={2.5} />
-      <Environment preset="city" />
-      <Float speed={2} rotationIntensity={0.15} floatIntensity={0.6}>
-        <EveModel {...props} />
-      </Float>
-      <ContactShadows 
-        position={[0, -3.2, 0]} 
-        opacity={0.35} 
-        scale={10} 
-        blur={2.5} 
-        far={5} 
-      />
-    </Canvas>
-  </div>
-));

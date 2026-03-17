@@ -3,7 +3,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>FluentFlow - English Practice</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
@@ -18,6 +18,10 @@
         font-family: 'Lexend', sans-serif;
         background-color: var(--brand-bg);
         color: #1e293b;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        -webkit-tap-highlight-color: transparent;
       }
 
       @keyframes fadeInUp {
@@ -37,7 +41,7 @@
 
       /* Custom Scrollbar */
       .custom-scrollbar::-webkit-scrollbar {
-        width: 5px;
+        width: 4px;
       }
       .custom-scrollbar::-webkit-scrollbar-track {
         background: transparent;
@@ -55,7 +59,12 @@
       }
       
       .mask-gradient-top {
-        mask-image: linear-gradient(to bottom, transparent, black 15%, black 85%, transparent);
+        mask-image: linear-gradient(to bottom, transparent, black 10%, black 90%, transparent);
+      }
+
+      /* Breakpoint overrides for extra small screens */
+      @media (max-width: 360px) {
+        .xs\:h-\[200px\] { height: 160px; }
       }
     </style>
     <script type="importmap">
