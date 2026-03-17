@@ -42,6 +42,13 @@ const jsonFromChat = async <T>(openai: OpenAI, systemPrompt: string, userPrompt:
 };
 
 export default async function handler(req: any, res: any) {
+  if (req.method === 'GET') {
+    return res.status(200).json({
+      ok: true,
+      hasOpenAIKey: Boolean(process.env.OPENAI_API_KEY?.trim())
+    });
+  }
+
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
@@ -181,6 +188,12 @@ export default async function handler(req: any, res: any) {
 
     return res.status(400).json({ error: 'Invalid action' });
   } catch (error: any) {
-    return res.status(500).json({ error: error?.message || 'Internal server error' });
+    const message = error?.message || 'Internal server error';
+    console.error('[api/ai] Request failed', {
+      action: req?.body?.action,
+      message,
+      stack: error?.stack
+    });
+    return res.status(500).json({ error: message });
   }
 }
