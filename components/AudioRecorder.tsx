@@ -5,6 +5,7 @@ interface AudioRecorderProps {
   onAudioRecorded: (base64: string, mimeType: string, audioUrl: string, transcription?: string) => void;
   isProcessing: boolean;
   disabled: boolean;
+  density?: 'normal' | 'compact' | 'ultra-compact';
   onRecordingStateChange?: (recording: boolean) => void;
   onRecorderLog?: (line: string) => void;
 }
@@ -42,7 +43,7 @@ const getSpeechRecognitionCtor = () =>
 const makeRunId = () => `rec_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 
 export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
-  ({ onAudioRecorded, isProcessing, disabled, onRecordingStateChange, onRecorderLog }, ref) => {
+  ({ onAudioRecorded, isProcessing, disabled, density = 'normal', onRecordingStateChange, onRecorderLog }, ref) => {
     const [isRecording, setIsRecording] = useState(false);
 
     const recorderRef = useRef<MediaRecorder | null>(null);
@@ -295,13 +296,21 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
       };
     }, []);
 
+    const isUltraCompact = density === 'ultra-compact';
+    const isCompact = density === 'compact';
+    const wrapperClass = isUltraCompact ? 'py-1 gap-1' : isCompact ? 'py-1.5 gap-2' : 'py-2 sm:py-4 gap-2 sm:gap-3';
+    const buttonSizeClass = isUltraCompact ? 'w-12 h-12' : isCompact ? 'w-14 h-14' : 'w-16 h-16 sm:w-20 sm:h-20';
+    const loaderIconClass = isUltraCompact ? 'w-5 h-5' : 'w-7 h-7 sm:w-8 sm:h-8';
+    const squareIconClass = isUltraCompact ? 'w-4 h-4' : 'w-6 h-6 sm:w-8 sm:h-8';
+    const micIconClass = isUltraCompact ? 'w-5 h-5' : 'w-7 h-7 sm:w-9 sm:h-9';
+
     return (
-      <div className="flex flex-col items-center justify-center py-2 sm:py-4 gap-2 sm:gap-3">
+      <div className={`flex flex-col items-center justify-center ${wrapperClass}`}>
         <button
           onClick={toggleRecording}
           disabled={disabled || isProcessing}
           className={`
-            relative w-16 h-16 sm:w-20 sm:h-20 rounded-full flex items-center justify-center shadow-xl transition-all duration-300 select-none
+            relative ${buttonSizeClass} rounded-full flex items-center justify-center shadow-xl transition-all duration-300 select-none
             ${disabled ? 'bg-gray-100 cursor-not-allowed text-gray-300 shadow-none ring-0' : ''}
             ${!disabled && !isRecording && !isProcessing ? 'bg-indigo-600 text-white hover:bg-indigo-700 hover:scale-105 hover:shadow-indigo-300/40 shadow-indigo-200 ring-4 ring-indigo-50' : ''}
             ${isRecording ? 'bg-red-500 text-white ring-4 ring-red-100 scale-110 shadow-red-200 animate-pulse' : ''}
@@ -309,21 +318,21 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
           `}
         >
           {isProcessing ? (
-            <Loader2 className="w-7 h-7 sm:w-8 sm:h-8 animate-spin" />
+            <Loader2 className={`${loaderIconClass} animate-spin`} />
           ) : isRecording ? (
-            <Square className="w-6 h-6 sm:w-8 sm:h-8 fill-current rounded-sm" />
+            <Square className={`${squareIconClass} fill-current rounded-sm`} />
           ) : (
-            <Mic className="w-7 h-7 sm:w-9 sm:h-9" />
+            <Mic className={micIconClass} />
           )}
         </button>
 
-        <div className="h-4 flex items-center justify-center">
+        <div className={`${isUltraCompact ? 'h-0' : 'h-4'} flex items-center justify-center`}>
           <p
             className={`text-[9px] sm:text-[10px] font-bold uppercase tracking-widest transition-opacity duration-300 ${
               isRecording ? 'text-red-500' : 'text-gray-400'
             }`}
           >
-            {isRecording ? 'Gravando...' : isProcessing ? 'Processando...' : ''}
+            {isUltraCompact ? '' : isRecording ? 'Gravando...' : isProcessing ? 'Processando...' : ''}
           </p>
         </div>
       </div>

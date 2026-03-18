@@ -46,7 +46,7 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({ initialProfile, onSa
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/50 backdrop-blur-sm p-4 animate-fade-in-up font-sans">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm overflow-hidden transform transition-all">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm overflow-hidden transform transition-all max-h-[90dvh] flex flex-col">
         
         {/* Simple Header */}
         <div className="bg-white px-5 py-4 border-b border-gray-50 flex items-center justify-between">
@@ -60,7 +60,7 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({ initialProfile, onSa
             )}
         </div>
         
-        <div className="p-6">
+        <div className="p-5 sm:p-6 overflow-y-auto">
           <form onSubmit={handleSubmit} className="flex flex-col gap-6">
             
             {/* Main Focus: Name Input */}

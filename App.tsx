@@ -14,7 +14,7 @@ import { ProgressHistory } from './components/ProgressHistory';
 import { ModeSelector } from './components/ModeSelector';
 import { AdminDashboard } from './components/AdminDashboard';
 import { TopicSelector } from './components/TopicSelector';
-import { BarChart, Loader2, Settings, Volume2, AlertCircle, CheckCircle2, Home, User, Radio, Monitor, MonitorOff, ToggleLeft, ToggleRight, Sparkles } from 'lucide-react';
+import { BarChart, Loader2, Settings, AlertCircle, CheckCircle2, Home, Radio, Monitor, MonitorOff, ToggleLeft, ToggleRight } from 'lucide-react';
 
 const USERS_KEY = 'fluentflow_users';
 
@@ -33,6 +33,9 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
   const [showHistory, setShowHistory] = useState(false);
   const [showTopicSelector, setShowTopicSelector] = useState(false);
   const [isAvatarSpeaking, setIsAvatarSpeaking] = useState(false);
+  const [viewportHeight, setViewportHeight] = useState(
+    typeof window !== 'undefined' ? window.innerHeight : 800
+  );
   
   const [isAvatarEnabled, setIsAvatarEnabled] = useState(() => {
     try {
@@ -61,6 +64,35 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
     } catch (e) {}
     return defaultState;
   });
+
+  useEffect(() => {
+    const syncViewportHeight = () => setViewportHeight(window.innerHeight);
+    syncViewportHeight();
+    window.addEventListener('resize', syncViewportHeight);
+    window.addEventListener('orientationchange', syncViewportHeight);
+    return () => {
+      window.removeEventListener('resize', syncViewportHeight);
+      window.removeEventListener('orientationchange', syncViewportHeight);
+    };
+  }, []);
+
+  const layoutDensity = viewportHeight >= 700 ? 'normal' : viewportHeight >= 560 ? 'compact' : 'ultra-compact';
+  const avatarHeightClass =
+    layoutDensity === 'normal'
+      ? 'h-[180px] sm:h-[260px] md:h-[300px]'
+      : layoutDensity === 'compact'
+      ? 'h-[120px] sm:h-[170px] md:h-[210px]'
+      : 'h-[64px] sm:h-[96px] md:h-[128px]';
+  const topBlockClass =
+    layoutDensity === 'normal' ? 'pt-4 pb-2' : layoutDensity === 'compact' ? 'pt-2.5 pb-1.5' : 'pt-1 pb-0';
+  const bottomPanelClass =
+    layoutDensity === 'normal'
+      ? 'rounded-t-[32px] p-4 sm:p-6 pb-6'
+      : layoutDensity === 'compact'
+      ? 'rounded-t-[26px] p-3 sm:p-4 pb-4'
+      : 'rounded-t-[18px] p-2 pb-2';
+  const conversationMinHeightClass =
+    layoutDensity === 'normal' ? 'min-h-[120px]' : layoutDensity === 'compact' ? 'min-h-[84px]' : 'min-h-[56px]';
 
   useEffect(() => {
     localStorage.setItem(`ff_avatar_pref_${currentUser.id}`, JSON.stringify(isAvatarEnabled));
@@ -408,8 +440,8 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
   };
 
   return (
-    <div className="flex flex-col h-[100dvh] bg-[#F8FAFC] overflow-hidden font-sans">
-      <header className="bg-white/80 backdrop-blur-md border-b px-4 sm:px-6 py-2.5 flex items-center justify-between z-30 shrink-0">
+    <div className="flex flex-col h-[100dvh] min-h-[100dvh] bg-[#F8FAFC] overflow-hidden font-sans">
+      <header className={`bg-white/80 backdrop-blur-md border-b flex items-center justify-between z-30 shrink-0 ${layoutDensity === 'ultra-compact' ? 'px-3 py-1.5' : 'px-3 sm:px-6 py-2 sm:py-2.5'}`}>
         <div className="flex items-center gap-2 sm:gap-3">
           <button 
             onClick={() => setShowProfileSetup(true)}
@@ -439,15 +471,15 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
         </div>
       </header>
 
-      <main className="flex-1 flex flex-col min-h-0 relative max-w-2xl mx-auto w-full px-4 sm:px-6 overflow-hidden">
+      <main className="flex-1 flex flex-col min-h-0 relative max-w-2xl mx-auto w-full px-3 sm:px-6 overflow-hidden">
         {!appMode ? (
           <ModeSelector userName={currentUser.name || "Visitante"} onSelectMode={handleModeChange} />
         ) : (
           <>
-            <div className="shrink-0 pt-4 pb-2">
+            <div className={`shrink-0 ${topBlockClass}`}>
               <ScoreBoard state={gameState} totalPhrases={1000} />
               
-              <div className={`transition-all duration-500 flex items-center justify-center ${isAvatarEnabled ? 'h-[180px] sm:h-[260px] md:h-[300px]' : 'h-10'}`}>
+              <div className={`transition-all duration-500 flex items-center justify-center ${isAvatarEnabled ? avatarHeightClass : 'h-8 sm:h-10'}`}>
                 {isAvatarEnabled ? (
                   <Avatar3D isSpeaking={isAvatarSpeaking} isRecording={status === AppStatus.RECORDING} audioAnalyser={analyserForAvatar} />
                 ) : (
@@ -458,9 +490,9 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
               </div>
             </div>
 
-            <div className="flex-1 flex flex-col min-h-0 overflow-hidden relative z-10 pb-4">
+            <div className={`flex-1 flex flex-col min-h-0 overflow-hidden relative z-10 ${layoutDensity === 'ultra-compact' ? 'pb-1' : 'pb-3 sm:pb-4'}`}>
               {appMode === 'conversation' ? (
-                <div className="flex-1 overflow-y-auto space-y-3 custom-scrollbar pr-1">
+                <div className={`flex-1 ${conversationMinHeightClass} overflow-y-auto space-y-3 custom-scrollbar pr-1`}>
                   {chatHistory.map((msg, i) => (
                     <div key={i} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'} animate-fade-in-up`}>
                       <div className={`px-4 py-2.5 rounded-2xl max-w-[90%] text-sm shadow-sm ${msg.role === 'user' ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-white text-slate-700 rounded-tl-none border border-slate-100'}`}>
@@ -474,7 +506,8 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
                   <div ref={messagesEndRef} className="h-2" />
                 </div>
               ) : (
-                <div className="flex-1 flex flex-col justify-center">
+                <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar pr-1">
+                  <div className={`min-h-full flex flex-col justify-center ${layoutDensity === 'ultra-compact' ? 'py-1' : 'py-2'}`}>
                   {status === AppStatus.LOADING_PHRASES ? (
                     <div className="flex flex-col items-center gap-3">
                         <Loader2 className="w-6 h-6 animate-spin text-indigo-300" />
@@ -496,17 +529,20 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
                       isSpeaking={isAvatarSpeaking} 
                     />
                   ) : null}
+                  </div>
                 </div>
               )}
             </div>
 
-            <div className="bg-white rounded-t-[32px] shadow-sm p-4 sm:p-6 pb-6 z-30 shrink-0 border-t border-slate-50">
-              <div className="flex flex-col items-center max-w-xs mx-auto">
-                <p className="text-[9px] font-black text-slate-300 uppercase tracking-widest mb-2">
-                  {status === AppStatus.PROCESSING_AUDIO ? 'Processando...' : 'Toque no microfone para falar'}
-                </p>
-                {appMode === 'conversation' && eveDebugLine && (
-                  <p className="text-[10px] text-slate-400 mb-2 text-center break-all">
+            <div className={`bg-white ${bottomPanelClass} shadow-sm z-30 shrink-0 border-t border-slate-50`}>
+              <div className="flex flex-col items-center w-full max-w-md mx-auto">
+                {layoutDensity !== 'ultra-compact' && (
+                  <p className="text-[9px] font-black text-slate-300 uppercase tracking-widest mb-2">
+                    {status === AppStatus.PROCESSING_AUDIO ? 'Processando...' : 'Toque no microfone para falar'}
+                  </p>
+                )}
+                {layoutDensity !== 'ultra-compact' && appMode === 'conversation' && eveDebugLine && (
+                  <p className="text-[10px] text-slate-400 mb-2 text-center break-words w-full">
                     {eveDebugLine}
                   </p>
                 )}
@@ -514,6 +550,7 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
                   onAudioRecorded={handleAudioRecorded} 
                   isProcessing={status === AppStatus.PROCESSING_AUDIO} 
                   disabled={isAvatarSpeaking || status === AppStatus.LOADING_PHRASES} 
+                  density={layoutDensity}
                   onRecordingStateChange={(recording) => {
                     setStatus(prev => {
                       if (recording) return AppStatus.RECORDING;
@@ -531,7 +568,7 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
       {showTopicSelector && <TopicSelector onSelect={(t) => { setSelectedTopic(t); setAppMode('practice'); setShowTopicSelector(false); }} onClose={() => setShowTopicSelector(false)} />}
       {showProfileSetup && <ProfileSetup initialProfile={currentUser} onSave={(u) => { onUpdateUser({...currentUser, ...u}); setShowProfileSetup(false); }} onCancel={() => setShowProfileSetup(false)} />}
       {showSettings && (
-        <div className="absolute top-14 right-4 w-56 bg-white rounded-2xl shadow-2xl border p-2 z-50 animate-fade-in-up">
+        <div className="absolute top-12 sm:top-14 right-3 sm:right-4 w-[min(14rem,calc(100vw-1.5rem))] sm:w-56 bg-white rounded-2xl shadow-2xl border p-2 z-50 animate-fade-in-up">
           <button onClick={() => setIsAvatarEnabled(!isAvatarEnabled)} className="w-full text-left p-3 rounded-xl text-sm font-semibold flex items-center justify-between text-slate-600 hover:bg-slate-50">
              <div className="flex items-center gap-3">
                {isAvatarEnabled ? <Monitor className="w-4 h-4 text-indigo-500" /> : <MonitorOff className="w-4 h-4 text-slate-300" />}

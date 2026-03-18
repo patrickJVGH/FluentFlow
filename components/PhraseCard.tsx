@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { Phrase } from '../types';
-import { Eye, Volume2, BookMarked, Square } from 'lucide-react';
+import { Eye, Volume2, BookMarked } from 'lucide-react';
 
 interface PhraseCardProps {
   phrase: Phrase;
@@ -36,7 +36,7 @@ export const PhraseCard: React.FC<PhraseCardProps> = ({ phrase, onSpeak, isSpeak
           onClick={(e) => { e.stopPropagation(); onSpeak(); }}
           className={`p-2 sm:p-3 rounded-full shrink-0 transition-all ${isSpeaking ? 'bg-rose-50 text-rose-500 animate-pulse' : 'bg-slate-50 text-slate-300 hover:text-indigo-500 hover:bg-indigo-50'}`}
         >
-          <Volume2 className="w-4 h-4 sm:w-6 h-6" />
+          <Volume2 className="w-4 h-4 sm:w-6 sm:h-6" />
         </button>
       </div>
 
