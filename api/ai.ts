@@ -130,6 +130,7 @@ const transcriptionLanguage = normalizeText(process.env.OPENAI_TRANSCRIPTION_LAN
 const ttsVoice = normalizeText(process.env.OPENAI_TTS_VOICE) || 'alloy';
 const disableServerTranscription = envFlag(process.env.DISABLE_SERVER_TRANSCRIPTION);
 const disableServerTts = envFlag(process.env.DISABLE_SERVER_TTS);
+let ttsAccessUnavailableForRuntime = false;
 
 const chatJsonWithFallback = async <T>(
   openai: OpenAI | null,
@@ -256,6 +257,11 @@ const synthesizeSpeech = async (
     return { base64: null, mimeType: null };
   }
 
+  if (ttsAccessUnavailableForRuntime) {
+    debug.warnings.push('server_tts_model_access_unavailable_runtime');
+    return { base64: null, mimeType: null };
+  }
+
   if (!openai) {
     debug.errors.push('OPENAI_API_KEY is not set for speech');
     return { base64: null, mimeType: null };
@@ -282,7 +288,14 @@ const synthesizeSpeech = async (
     }
   }
 
-  if (lastError) debug.errors.push(`tts_failed:${lastError}`);
+  if (lastError) {
+    if (lastError.toLowerCase().includes('does not have access to model') || lastError.toLowerCase().includes('model_not_found')) {
+      ttsAccessUnavailableForRuntime = true;
+      debug.warnings.push('server_tts_disabled_for_runtime_due_model_access');
+    } else {
+      debug.errors.push(`tts_failed:${lastError}`);
+    }
+  }
   return { base64: null, mimeType: null };
 };
 
