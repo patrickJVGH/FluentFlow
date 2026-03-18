@@ -1,5 +1,5 @@
-import React, { useState, useRef, useImperativeHandle, forwardRef } from 'react';
-import { Mic, Square, Loader2 } from 'lucide-react';
+import React, { forwardRef, useImperativeHandle, useRef, useState } from 'react';
+import { Loader2, Mic, Square } from 'lucide-react';
 
 interface AudioRecorderProps {
   onAudioRecorded: (base64: string, mimeType: string, audioUrl: string, transcription?: string) => void;
@@ -13,6 +13,9 @@ export interface AudioRecorderRef {
   isRecording: boolean;
 }
 
+const MIN_RECORDING_DURATION_MS = 500;
+const MIN_BLOB_SIZE_BYTES = 100;
+
 const pickSupportedMimeType = (): string => {
   const candidates = [
     'audio/webm;codecs=opus',
@@ -23,14 +26,10 @@ const pickSupportedMimeType = (): string => {
 
   for (const type of candidates) {
     try {
-<<<<<<< ours
-      if ((window as any).MediaRecorder?.isTypeSupported?.(type)) {
-        return type;
-      }
-=======
       if ((window as any).MediaRecorder?.isTypeSupported?.(type)) return type;
->>>>>>> theirs
-    } catch {}
+    } catch {
+      // noop
+    }
   }
 
   return '';
@@ -39,56 +38,47 @@ const pickSupportedMimeType = (): string => {
 export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
   ({ onAudioRecorded, isProcessing, disabled }, ref) => {
     const [isRecording, setIsRecording] = useState(false);
+
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-    const chunksRef = useRef<Blob[]>([]);
     const streamRef = useRef<MediaStream | null>(null);
-    const startTimeRef = useRef<number>(0);
     const recognitionRef = useRef<any>(null);
+
+    const chunksRef = useRef<Blob[]>([]);
     const transcriptRef = useRef('');
-<<<<<<< ours
-=======
     const finalTranscriptRef = useRef('');
->>>>>>> theirs
+    const startTimeRef = useRef(0);
     const isStoppingRef = useRef(false);
 
     const cleanupStream = () => {
-      if (streamRef.current) {
-<<<<<<< ours
-        streamRef.current.getTracks().forEach((track) => track.stop());
-=======
-        streamRef.current.getTracks().forEach(track => track.stop());
->>>>>>> theirs
-        streamRef.current = null;
-      }
+      if (!streamRef.current) return;
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
     };
 
     const cleanupRecorder = () => {
       mediaRecorderRef.current = null;
       chunksRef.current = [];
-      isStoppingRef.current = false;
-<<<<<<< ours
-=======
+      transcriptRef.current = '';
       finalTranscriptRef.current = '';
->>>>>>> theirs
+      startTimeRef.current = 0;
+      isStoppingRef.current = false;
       setIsRecording(false);
     };
 
     const stopRecognition = () => {
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.stop();
-        } catch {}
-        recognitionRef.current = null;
+      if (!recognitionRef.current) return;
+      try {
+        recognitionRef.current.stop();
+      } catch {
+        // noop
       }
+      recognitionRef.current = null;
     };
 
     const startRecognition = () => {
       const SpeechRecognitionCtor =
         (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-<<<<<<< ours
 
-=======
->>>>>>> theirs
       if (!SpeechRecognitionCtor) return;
 
       try {
@@ -98,41 +88,6 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
         recognition.continuous = true;
 
         recognition.onresult = (event: any) => {
-<<<<<<< ours
-          const transcript = Array.from(event.results || [])
-            .map((result: any) => result?.[0]?.transcript || '')
-            .join(' ')
-            .trim();
-
-          transcriptRef.current = transcript;
-        };
-
-        recognition.onerror = () => {};
-        recognition.onend = () => {
-          recognitionRef.current = null;
-        };
-
-        recognition.start();
-        recognitionRef.current = recognition;
-      } catch {}
-    };
-
-    const startRecording = async () => {
-      if (isRecording || disabled || isProcessing) return;
-
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
-        });
-
-        streamRef.current = stream;
-
-        const mimeType = pickSupportedMimeType();
-=======
           let finalTranscript = finalTranscriptRef.current;
           let interimTranscript = '';
 
@@ -159,13 +114,23 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
 
         recognition.start();
         recognitionRef.current = recognition;
-      } catch {}
+      } catch {
+        // noop
+      }
     };
 
     const startRecording = async () => {
       if (isRecording || disabled || isProcessing) return;
 
       try {
+        if (!navigator.mediaDevices?.getUserMedia) {
+          throw new Error('getUserMedia is not supported in this browser.');
+        }
+
+        if (!(window as any).MediaRecorder) {
+          throw new Error('MediaRecorder is not supported in this browser.');
+        }
+
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: {
             echoCancellation: true,
@@ -182,57 +147,38 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
         isStoppingRef.current = false;
 
         const mimeType = pickSupportedMimeType();
-        if (!(window as any).MediaRecorder) {
-          throw new Error('MediaRecorder is not supported in this browser.');
-        }
-
->>>>>>> theirs
         const mediaRecorder = mimeType
           ? new MediaRecorder(stream, { mimeType })
           : new MediaRecorder(stream);
 
         mediaRecorderRef.current = mediaRecorder;
-<<<<<<< ours
-        chunksRef.current = [];
-        transcriptRef.current = '';
-        startTimeRef.current = Date.now();
-        isStoppingRef.current = false;
 
-        startRecognition();
-=======
->>>>>>> theirs
-
-        mediaRecorder.ondataavailable = (e) => {
-          if (e.data && e.data.size > 0) {
-            chunksRef.current.push(e.data);
+        mediaRecorder.ondataavailable = event => {
+          if (event.data && event.data.size > 0) {
+            chunksRef.current.push(event.data);
           }
         };
 
-        mediaRecorder.onerror = (e) => {
-          console.error('MediaRecorder error:', e);
+        mediaRecorder.onerror = event => {
+          console.error('MediaRecorder error:', event);
         };
 
         mediaRecorder.onstop = () => {
           stopRecognition();
 
-<<<<<<< ours
-          const transcript = transcriptRef.current.trim();
-=======
           const transcript = transcriptRef.current.trim() || finalTranscriptRef.current.trim();
->>>>>>> theirs
-          const duration = Date.now() - startTimeRef.current;
+          const durationMs = Date.now() - startTimeRef.current;
           const finalMimeType = mediaRecorder.mimeType || mimeType || 'audio/webm';
 
           try {
-            if (duration < 500 && !transcript) {
+            if (durationMs < MIN_RECORDING_DURATION_MS && !transcript) {
               console.warn('Recording too short, ignored.');
-<<<<<<< ours
               return;
             }
 
             const blob = new Blob(chunksRef.current, { type: finalMimeType });
 
-            if (blob.size < 100) {
+            if (blob.size < MIN_BLOB_SIZE_BYTES) {
               if (transcript) {
                 onAudioRecorded('', '', '', transcript);
                 return;
@@ -245,89 +191,34 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
             const audioUrl = URL.createObjectURL(blob);
             const reader = new FileReader();
 
-            reader.readAsDataURL(blob);
             reader.onloadend = () => {
-              const base64String = ((reader.result as string).split(',')[1]) || '';
-              onAudioRecorded(
-                base64String,
-                finalMimeType,
-                audioUrl,
-                transcript || undefined
-              );
-            };
-=======
-              return;
-            }
-
-            const blob = new Blob(chunksRef.current, { type: finalMimeType });
-
-            if (blob.size < 100) {
-              if (transcript) {
-                onAudioRecorded('', '', '', transcript);
-                return;
-              }
-              console.warn('Recording empty, ignored.');
-              return;
-            }
-
-            const audioUrl = URL.createObjectURL(blob);
-            const reader = new FileReader();
-
-            reader.onloadend = () => {
-              const result = reader.result as string;
+              const result = typeof reader.result === 'string' ? reader.result : '';
               const base64String = result.split(',')[1] || '';
               onAudioRecorded(base64String, finalMimeType, audioUrl, transcript || undefined);
             };
 
+            reader.onerror = () => {
+              if (transcript) {
+                onAudioRecorded('', '', '', transcript);
+              }
+            };
+
             reader.readAsDataURL(blob);
->>>>>>> theirs
           } finally {
             cleanupStream();
             cleanupRecorder();
           }
         };
 
-<<<<<<< ours
-=======
         startRecognition();
->>>>>>> theirs
         mediaRecorder.start(250);
         setIsRecording(true);
-      } catch (err) {
-        console.error('Error accessing microphone:', err);
+      } catch (error) {
+        console.error('Error accessing microphone:', error);
         alert('Precisamos de acesso ao microfone para praticar a fala.');
+        stopRecognition();
         cleanupStream();
         cleanupRecorder();
-<<<<<<< ours
-      }
-    };
-
-    const stopRecording = () => {
-      const recorder = mediaRecorderRef.current;
-      if (!recorder || !isRecording || isStoppingRef.current) return;
-
-      isStoppingRef.current = true;
-
-      try {
-        if (recorder.state !== 'inactive') {
-          recorder.stop();
-        }
-      } catch (err) {
-        console.error('Error stopping recorder:', err);
-        cleanupStream();
-        cleanupRecorder();
-      }
-    };
-
-    const toggleRecording = () => {
-      if (isRecording) {
-        stopRecording();
-      } else {
-        startRecording();
-      }
-    };
-
-=======
       }
     };
 
@@ -341,11 +232,16 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
         if (recorder.state === 'recording') {
           recorder.requestData();
         }
+
         if (recorder.state !== 'inactive') {
           recorder.stop();
+        } else {
+          cleanupStream();
+          cleanupRecorder();
         }
-      } catch (err) {
-        console.error('Error stopping recorder:', err);
+      } catch (error) {
+        console.error('Error stopping recorder:', error);
+        stopRecognition();
         cleanupStream();
         cleanupRecorder();
       }
@@ -356,7 +252,6 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
       else startRecording();
     };
 
->>>>>>> theirs
     useImperativeHandle(ref, () => ({
       startRecording,
       stopRecording,
