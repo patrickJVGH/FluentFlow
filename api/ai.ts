@@ -104,7 +104,7 @@ const createDebug = (requestId: string): EveDebugInfo => ({
 });
 
 const logEve = (requestId: string, stage: string, data?: AnyObject) => {
-  const tag = `[api/eve][${requestId}] ${stage}`;
+  const tag = `[api/eve][${apiVersion}][${requestId}] ${stage}`;
   if (data) console.log(tag, data);
   else console.log(tag);
 };
@@ -136,6 +136,7 @@ const ttsVoice = normalizeText(process.env.OPENAI_TTS_VOICE) || 'alloy';
 const disableServerTranscription = envFlag(process.env.DISABLE_SERVER_TRANSCRIPTION);
 const disableServerTts = envFlag(process.env.DISABLE_SERVER_TTS);
 const buildId = normalizeText(process.env.VERCEL_GIT_COMMIT_SHA).slice(0, 12) || 'local';
+const apiVersion = 'eve-api-2026-03-18-2210';
 let ttsAccessUnavailableForRuntime = false;
 let chatAccessUnavailableForRuntime = false;
 let sttAccessUnavailableForRuntime = false;
@@ -445,7 +446,13 @@ const handleEveConversation = async (openai: OpenAI | null, payload: AnyObject =
     debug
   );
 
+  if (debug.errors.length) {
+    debug.warnings.push(...debug.errors.map(error => `conversation_nonfatal:${error}`));
+    debug.errors = [];
+  }
+
   logEve(requestId, 'conversation:done', {
+    apiVersion,
     buildId,
     transcriptSource: debug.transcriptSource,
     transcriptionModel: debug.transcriptionModel,
@@ -471,7 +478,7 @@ const handleEveConversation = async (openai: OpenAI | null, payload: AnyObject =
     feedback: normalizeText(result.feedback) || fallback.feedback,
     improvement: normalizeText(result.improvement),
     debug,
-    error: debug.errors.join(' | ') || undefined,
+    error: undefined,
   };
 };
 
@@ -492,6 +499,7 @@ const handleEveSpeech = async (openai: OpenAI | null, payload: AnyObject = {}) =
   }
 
   logEve(requestId, 'speech:done', {
+    apiVersion,
     buildId,
     ttsModel: debug.ttsModel,
     hasAudio: Boolean(speech.base64),
@@ -623,6 +631,7 @@ export default async function handler(req: any, res: any) {
   if (req.method === 'GET') {
     return res.status(200).json({
       ok: true,
+      apiVersion,
       buildId,
       hasOpenAIKey: Boolean(normalizeText(process.env.OPENAI_API_KEY)),
       chatModels,
@@ -642,7 +651,7 @@ export default async function handler(req: any, res: any) {
     const requestId = resolveIncomingRequestId(req, payload || {});
     res.setHeader('X-EVE-Request-Id', requestId);
 
-    console.log('[api/ai] Incoming request', {
+    console.log(`[api/ai][${apiVersion}] Incoming request`, {
       buildId,
       method: req?.method,
       action,
