@@ -10,7 +10,7 @@ interface AvatarProps {
 export const Avatar3D: React.FC<AvatarProps> = ({ isSpeaking, isRecording, audioAnalyser }) => {
   const [pulseScale, setPulseScale] = useState(1);
   const [blink, setBlink] = useState(false);
-  const requestRef = useRef<number>();
+  const requestRef = useRef<number | null>(null);
   const pulseVelocity = useRef(0);
 
   // Ciclo de piscar
@@ -56,7 +56,11 @@ export const Avatar3D: React.FC<AvatarProps> = ({ isSpeaking, isRecording, audio
     };
 
     requestRef.current = requestAnimationFrame(animate);
-    return () => cancelAnimationFrame(requestRef.current!);
+    return () => {
+      if (requestRef.current !== null) {
+        cancelAnimationFrame(requestRef.current);
+      }
+    };
   }, [isSpeaking, audioAnalyser, pulseScale]);
 
   const mainColor = isRecording ? "#FF4757" : "#00F5FF";

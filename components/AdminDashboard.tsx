@@ -9,10 +9,22 @@ interface AdminDashboardProps {
 }
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ users, onDeleteUser, onLogout }) => {
+  const getDisplayedLevel = (score: number) => Math.max(1, Math.floor(Math.max(0, score) / 100) + 1);
+
   const getUserStats = (userId: string): GameState | null => {
     try {
       const data = localStorage.getItem(`fluentflow_progress_${userId}`);
-      return data ? JSON.parse(data) : null;
+      if (!data) return null;
+
+      const parsed = JSON.parse(data);
+      const score = Number(parsed?.score);
+      if (!Number.isFinite(score)) return null;
+
+      return {
+        ...parsed,
+        score: Math.max(0, Math.round(score)),
+        currentLevel: getDisplayedLevel(score),
+      };
     } catch {
       return null;
     }

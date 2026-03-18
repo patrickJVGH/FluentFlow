@@ -1,4 +1,4 @@
-import { ChatMessage } from '../types';
+import { ChatMessage, Phrase, PronunciationResult } from '../types';
 
 export interface EveDebugInfo {
   requestId: string;
@@ -26,6 +26,12 @@ export interface EveSpeechResponse {
   requestId: string;
   base64: string | null;
   mimeType: string | null;
+  debug: EveDebugInfo;
+  error?: string;
+}
+
+export interface EvePronunciationResponse extends PronunciationResult {
+  requestId: string;
   debug: EveDebugInfo;
   error?: string;
 }
@@ -101,6 +107,27 @@ const defaultDebug = (requestId: string): EveDebugInfo => ({
   errors: [],
 });
 
+const normalizePhraseList = (items: unknown, fallbackCategory: string): Phrase[] => {
+  if (!Array.isArray(items)) return [];
+
+  return items
+    .map((item: any, index) => ({
+      id:
+        typeof item?.id === 'string' && item.id.trim()
+          ? item.id
+          : `generated_${Date.now()}_${index}`,
+      english: typeof item?.english === 'string' ? item.english.trim() : '',
+      portuguese: typeof item?.portuguese === 'string' ? item.portuguese.trim() : '',
+      difficulty:
+        item?.difficulty === 'easy' || item?.difficulty === 'medium' || item?.difficulty === 'hard'
+          ? item.difficulty
+          : 'medium',
+      category:
+        typeof item?.category === 'string' && item.category.trim() ? item.category.trim() : fallbackCategory,
+    }))
+    .filter(item => item.english && item.portuguese);
+};
+
 export const converseWithEve = async (
   audioBase64: string,
   mimeType: string,
@@ -175,4 +202,89 @@ export const requestEveSpeech = async (text: string): Promise<EveSpeechResponse>
       error: extractErrorMessage(error),
     };
   }
+};
+
+export const evaluatePronunciation = async (
+  audioBase64: string,
+  mimeType: string,
+  targetPhrase: string,
+  browserTranscript?: string
+): Promise<EvePronunciationResponse> => {
+  const requestId = createClientRequestId();
+
+  try {
+    const raw = await postAiAction<any>('pronunciation', {
+      requestId,
+      audioBase64,
+      mimeType,
+      targetPhrase,
+      transcription: browserTranscript,
+    });
+
+    const debug = ensureDebugShape(requestId, raw?.debug);
+
+    return {
+      requestId: typeof raw?.requestId === 'string' ? raw.requestId : requestId,
+      transcript: typeof raw?.transcript === 'string' ? raw.transcript : browserTranscript?.trim() || '',
+      isCorrect: Boolean(raw?.isCorrect),
+      score: typeof raw?.score === 'number' ? Math.max(0, Math.min(100, raw.score)) : 0,
+      feedback:
+        typeof raw?.feedback === 'string' && raw.feedback.trim()
+          ? raw.feedback
+          : 'Nao foi possivel avaliar a pronunciacao agora.',
+      words: Array.isArray(raw?.words) ? raw.words : [],
+      debug,
+      error: typeof raw?.error === 'string' ? raw.error : undefined,
+    };
+  } catch (error: any) {
+    return {
+      requestId,
+      transcript: browserTranscript?.trim() || '',
+      isCorrect: false,
+      score: 0,
+      feedback: 'Erro ao processar audio.',
+      words: [],
+      debug: {
+        ...defaultDebug(requestId),
+        errors: [extractErrorMessage(error)],
+      },
+      error: extractErrorMessage(error),
+    };
+  }
+};
+
+export const requestPracticePhrases = async (
+  topic: string,
+  difficulty: string,
+  count: number = 5
+): Promise<Phrase[]> => {
+  const requestId = createClientRequestId();
+  const raw = await postAiAction<any>('generatePhrases', {
+    requestId,
+    topic,
+    difficulty,
+    count,
+  });
+  const phrases = normalizePhraseList(raw, topic);
+  if (!phrases.length) {
+    throw new Error('No phrases returned from generatePhrases');
+  }
+  return phrases;
+};
+
+export const requestVocabularyWords = async (
+  category: string,
+  count: number = 10
+): Promise<Phrase[]> => {
+  const requestId = createClientRequestId();
+  const raw = await postAiAction<any>('generateWords', {
+    requestId,
+    category,
+    count,
+  });
+  const phrases = normalizePhraseList(raw, category);
+  if (!phrases.length) {
+    throw new Error('No words returned from generateWords');
+  }
+  return phrases;
 };

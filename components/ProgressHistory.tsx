@@ -8,6 +8,17 @@ interface ProgressHistoryProps {
 }
 
 export const ProgressHistory: React.FC<ProgressHistoryProps> = ({ state, onClose }) => {
+  const formatChartDate = (dateValue: string) => {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateValue);
+    if (match) {
+      return `${Number(match[3])}/${Number(match[2])}`;
+    }
+
+    const parsed = new Date(dateValue);
+    if (Number.isNaN(parsed.getTime())) return dateValue;
+    return `${parsed.getDate()}/${parsed.getMonth() + 1}`;
+  };
+
   const chartData = useMemo(() => {
     let data = state.history || [];
 
@@ -121,7 +132,7 @@ export const ProgressHistory: React.FC<ProgressHistoryProps> = ({ state, onClose
                           {d.score}
                         </text>
                         <text x={x} y={CHART_HEIGHT + 15} textAnchor="middle" fontSize="10" fill="#9ca3af">
-                          {new Date(d.date).getDate()}/{new Date(d.date).getMonth() + 1}
+                          {formatChartDate(d.date)}
                         </text>
                       </g>
                     );

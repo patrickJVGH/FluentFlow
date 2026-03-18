@@ -1,8 +1,13 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { AppStatus, GameState, Phrase, PronunciationResult, TOPICS, AppMode, UserProfile, ChatMessage } from './types';
-import { validatePronunciation, generatePhrases, generateWords } from './services/geminiService';
-import { converseWithEve, requestEveSpeech } from './services/eveService';
+import { AppStatus, GameState, Phrase, PronunciationResult, TOPICS, AppMode, UserProfile, ChatMessage, HistoryEntry } from './types';
+import {
+  converseWithEve,
+  requestEveSpeech,
+  evaluatePronunciation,
+  requestPracticePhrases,
+  requestVocabularyWords,
+} from './services/eveService';
 import { getCoursePhrases, getRandomPhrases } from './phrases';
 import { PhraseCard } from './components/PhraseCard';
 import { AudioRecorder } from './components/AudioRecorder';
@@ -17,6 +22,111 @@ import { TopicSelector } from './components/TopicSelector';
 import { BarChart, Loader2, Settings, AlertCircle, CheckCircle2, Home, Radio, Monitor, MonitorOff, ToggleLeft, ToggleRight } from 'lucide-react';
 
 const USERS_KEY = 'fluentflow_users';
+const LEVEL_XP_STEP = 100;
+
+const createDefaultGameState = (): GameState => ({
+  score: 0,
+  streak: 0,
+  currentLevel: 1,
+  phrasesCompleted: 0,
+  courseProgressIndex: 0,
+  history: [],
+});
+
+const toLocalDateKey = (date: Date = new Date()): string => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const parseDateKey = (dateKey: string): Date | null => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateKey);
+  if (!match) return null;
+  const [, year, month, day] = match;
+  return new Date(Number(year), Number(month) - 1, Number(day));
+};
+
+const normalizeHistoryDate = (value: unknown): string | null => {
+  if (typeof value !== 'string' || !value.trim()) return null;
+
+  const dateKey = value.trim();
+  if (parseDateKey(dateKey)) return dateKey;
+
+  const parsed = new Date(dateKey);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return toLocalDateKey(parsed);
+};
+
+const normalizeHistory = (historyRaw: unknown): HistoryEntry[] => {
+  if (!Array.isArray(historyRaw)) return [];
+
+  const byDate = new Map<string, number>();
+  for (const item of historyRaw) {
+    const date = normalizeHistoryDate(item?.date);
+    const score = Number(item?.score);
+    if (!date || !Number.isFinite(score)) continue;
+    byDate.set(date, Math.max(0, Math.round(score)));
+  }
+
+  return Array.from(byDate.entries())
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([date, score]) => ({ date, score }));
+};
+
+const diffInDays = (left: string, right: string): number => {
+  const leftDate = parseDateKey(left);
+  const rightDate = parseDateKey(right);
+  if (!leftDate || !rightDate) return Number.POSITIVE_INFINITY;
+
+  const msPerDay = 24 * 60 * 60 * 1000;
+  return Math.round((leftDate.getTime() - rightDate.getTime()) / msPerDay);
+};
+
+const upsertHistoryEntry = (history: HistoryEntry[], score: number, dateKey: string = toLocalDateKey()): HistoryEntry[] => {
+  const normalized = normalizeHistory(history);
+  const nextScore = Math.max(0, Math.round(score));
+  const next = normalized.filter(entry => entry.date !== dateKey);
+  next.push({ date: dateKey, score: nextScore });
+  return next.sort((left, right) => left.date.localeCompare(right.date));
+};
+
+const calculateStreak = (history: HistoryEntry[], todayKey: string = toLocalDateKey()): number => {
+  const normalized = normalizeHistory(history);
+  if (!normalized.length) return 0;
+
+  const latestDate = normalized[normalized.length - 1].date;
+  const gapFromToday = diffInDays(todayKey, latestDate);
+  if (gapFromToday > 1) return 0;
+
+  let streak = 1;
+  for (let index = normalized.length - 1; index > 0; index -= 1) {
+    const current = normalized[index].date;
+    const previous = normalized[index - 1].date;
+    if (diffInDays(current, previous) === 1) streak += 1;
+    else break;
+  }
+  return streak;
+};
+
+const calculateLevel = (score: number): number => Math.max(1, Math.floor(Math.max(0, score) / LEVEL_XP_STEP) + 1);
+
+const normalizeGameState = (stateRaw: unknown): GameState => {
+  const base = createDefaultGameState();
+  const score = Number((stateRaw as GameState | null)?.score);
+  const phrasesCompleted = Number((stateRaw as GameState | null)?.phrasesCompleted);
+  const courseProgressIndex = Number((stateRaw as GameState | null)?.courseProgressIndex);
+  const history = normalizeHistory((stateRaw as GameState | null)?.history);
+
+  return {
+    score: Number.isFinite(score) ? Math.max(0, Math.round(score)) : base.score,
+    streak: calculateStreak(history),
+    currentLevel: calculateLevel(Number.isFinite(score) ? score : base.score),
+    phrasesCompleted: Number.isFinite(phrasesCompleted) ? Math.max(0, Math.round(phrasesCompleted)) : base.phrasesCompleted,
+    courseProgressIndex: Number.isFinite(courseProgressIndex) ? Math.max(0, Math.round(courseProgressIndex)) : base.courseProgressIndex,
+    history,
+  };
+};
 
 const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onUpdateUser: (u: UserProfile) => void; existingUsers: UserProfile[] }> = ({ currentUser, onLogout, onUpdateUser, existingUsers }) => {
   const [status, setStatus] = useState<AppStatus>(AppStatus.IDLE);
@@ -57,10 +167,10 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
   const [eveDebugLine, setEveDebugLine] = useState('');
 
   const [gameState, setGameState] = useState<GameState>(() => {
-    const defaultState: GameState = { score: 0, streak: 0, currentLevel: 1, phrasesCompleted: 0, courseProgressIndex: 0, history: [] };
+    const defaultState = createDefaultGameState();
     try {
       const saved = localStorage.getItem(`fluentflow_progress_${currentUser.id}`);
-      if (saved) return JSON.parse(saved);
+      if (saved) return normalizeGameState(JSON.parse(saved));
     } catch (e) {}
     return defaultState;
   });
@@ -103,6 +213,38 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
       localStorage.setItem(`fluentflow_progress_${currentUser.id}`, JSON.stringify(gameState));
     } catch (e) {}
   }, [gameState, currentUser.id]);
+
+  const registerProgressActivity = useCallback(
+    ({
+      scoreDelta = 0,
+      phraseDelta = 0,
+      advanceCourse = false,
+      dateKey = toLocalDateKey(),
+    }: {
+      scoreDelta?: number;
+      phraseDelta?: number;
+      advanceCourse?: boolean;
+      dateKey?: string;
+    }) => {
+      setGameState(prev => {
+        const nextScore = Math.max(0, prev.score + Math.round(scoreDelta));
+        const nextPhrasesCompleted = Math.max(0, prev.phrasesCompleted + Math.round(phraseDelta));
+        const nextCourseProgressIndex = advanceCourse ? prev.courseProgressIndex + 1 : prev.courseProgressIndex;
+        const nextHistory = upsertHistoryEntry(prev.history, nextScore, dateKey);
+
+        return {
+          ...prev,
+          score: nextScore,
+          streak: calculateStreak(nextHistory, dateKey),
+          currentLevel: calculateLevel(nextScore),
+          phrasesCompleted: nextPhrasesCompleted,
+          courseProgressIndex: nextCourseProgressIndex,
+          history: nextHistory,
+        };
+      });
+    },
+    []
+  );
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -337,6 +479,7 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
     setStatus(AppStatus.LOADING_PHRASES);
     setEveDebugLine('');
     stopAllSpeech();
+    const fallbackCount = mode === 'words' ? 8 : 5;
 
     try {
       let loadedPhrases: Phrase[] = [];
@@ -344,21 +487,27 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
         loadedPhrases = getCoursePhrases(gameState.courseProgressIndex, 5);
       } else if (mode === 'practice') {
         const topic = topicOverride || selectedTopic || TOPICS[0];
-        loadedPhrases = await generatePhrases(topic, 'medium', 5);
+        loadedPhrases = await requestPracticePhrases(topic, 'medium', 5);
       } else if (mode === 'words') {
-        loadedPhrases = await generateWords('General', 'medium', 8);
+        loadedPhrases = await requestVocabularyWords('General', 8);
       } else if (mode === 'conversation') {
         setChatHistory([]); 
         const welcome = `Hello ${currentUser.name}! I'm EVE. How are you today?`;
         setChatHistory([{ role: 'model', text: welcome, translation: `Olá ${currentUser.name}! Eu sou a EVE. Como você está hoje?` }]);
         speakText(welcome);
       }
+      if (mode !== 'conversation' && loadedPhrases.length === 0) {
+        throw new Error(`No content returned for ${mode}`);
+      }
       setPhrases(loadedPhrases);
       setCurrentPhraseIndex(0);
       setResult(null);
       setStatus(AppStatus.READY);
-    } catch (e) {
-      setPhrases(getRandomPhrases(5));
+    } catch (e: any) {
+      setEveDebugLine(`EVE load fallback | mode:${mode} | ${String(e?.message || e)}`);
+      setPhrases(getRandomPhrases(fallbackCount));
+      setCurrentPhraseIndex(0);
+      setResult(null);
       setStatus(AppStatus.READY);
     }
   }, [gameState.courseProgressIndex, currentUser.name, selectedTopic, speakText, stopAllSpeech]);
@@ -399,20 +548,25 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
           { role: 'user', text: userTranscript },
           { role: 'model', text: response.response, translation: response.translation, feedback: response.feedback, improvement: response.improvement }
         ]);
-        setGameState(prev => ({ ...prev, score: prev.score + 10 })); 
+        registerProgressActivity({ scoreDelta: 10 });
         speakText(response.response);
         setStatus(AppStatus.READY);
       } else {
-        const res = await validatePronunciation(base64, mimeType, phrases[currentPhraseIndex].english, browserTranscript);
-        setResult(res);
-        if (res.isCorrect) {
-          setGameState(prev => ({ 
-            ...prev, 
-            score: prev.score + res.score, 
-            phrasesCompleted: prev.phrasesCompleted + 1,
-            courseProgressIndex: appMode === 'course' ? prev.courseProgressIndex + 1 : prev.courseProgressIndex
-          }));
+        const currentPhrase = phrases[currentPhraseIndex];
+        if (!currentPhrase) {
+          throw new Error(`No phrase loaded for mode ${appMode || 'unknown'}`);
         }
+
+        const res = await evaluatePronunciation(base64, mimeType, currentPhrase.english, browserTranscript);
+        setEveDebugLine(
+          `EVE ${res.requestId} | STT:${res.debug.transcriptSource}/${res.debug.transcriptionModel || '-'} | CHAT:${res.debug.chatModel || '-'} | W:${res.debug.warnings.length} E:${res.debug.errors.length}`
+        );
+        setResult(res);
+        registerProgressActivity({
+          scoreDelta: res.isCorrect ? res.score : 0,
+          phraseDelta: res.isCorrect ? 1 : 0,
+          advanceCourse: Boolean(res.isCorrect && appMode === 'course'),
+        });
         setStatus(AppStatus.FEEDBACK);
       }
     } catch (e) {
@@ -541,7 +695,7 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
                     {status === AppStatus.PROCESSING_AUDIO ? 'Processando...' : 'Toque no microfone para falar'}
                   </p>
                 )}
-                {layoutDensity !== 'ultra-compact' && appMode === 'conversation' && eveDebugLine && (
+                {layoutDensity !== 'ultra-compact' && eveDebugLine && (
                   <p className="text-[10px] text-slate-400 mb-2 text-center break-words w-full">
                     {eveDebugLine}
                   </p>
@@ -566,7 +720,14 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
 
       {showHistory && <ProgressHistory state={gameState} onClose={() => setShowHistory(false)} />}
       {showTopicSelector && <TopicSelector onSelect={(t) => { setSelectedTopic(t); setAppMode('practice'); setShowTopicSelector(false); }} onClose={() => setShowTopicSelector(false)} />}
-      {showProfileSetup && <ProfileSetup initialProfile={currentUser} onSave={(u) => { onUpdateUser({...currentUser, ...u}); setShowProfileSetup(false); }} onCancel={() => setShowProfileSetup(false)} />}
+      {showProfileSetup && (
+        <ProfileSetup
+          initialProfile={currentUser}
+          existingNames={existingUsers.filter(user => user.id !== currentUser.id).map(user => user.name.trim()).filter(Boolean)}
+          onSave={(u) => { onUpdateUser({...currentUser, ...u}); setShowProfileSetup(false); }}
+          onCancel={() => setShowProfileSetup(false)}
+        />
+      )}
       {showSettings && (
         <div className="absolute top-12 sm:top-14 right-3 sm:right-4 w-[min(14rem,calc(100vw-1.5rem))] sm:w-56 bg-white rounded-2xl shadow-2xl border p-2 z-50 animate-fade-in-up">
           <button onClick={() => setIsAvatarEnabled(!isAvatarEnabled)} className="w-full text-left p-3 rounded-xl text-sm font-semibold flex items-center justify-between text-slate-600 hover:bg-slate-50">

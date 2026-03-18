@@ -516,16 +516,35 @@ const handlePronunciation = async (openai: OpenAI | null, payload: AnyObject = {
   const requestId = normalizeText(payload.requestId) || buildRequestId('pron');
   const debug = createDebug(requestId);
   const targetPhrase = normalizeText(payload.targetPhrase);
+  const browserTranscript = normalizeText(payload.transcription);
+  const hasAudio = Boolean(normalizeText(payload.audioBase64));
+
+  logEve(requestId, 'pronunciation:start', {
+    hasAudio,
+    hasBrowserTranscript: Boolean(browserTranscript),
+    targetPhraseLength: targetPhrase.length,
+  });
 
   const transcript = await resolveTranscript(
     openai,
     payload.audioBase64,
     payload.mimeType,
-    payload.transcription,
+    browserTranscript,
     debug
   );
 
   if (!transcript) {
+    logEve(requestId, 'pronunciation:no_transcript', {
+      debug: {
+        requestId,
+        transcriptSource: debug.transcriptSource,
+        transcriptionModel: debug.transcriptionModel,
+        chatModel: debug.chatModel,
+        ttsModel: debug.ttsModel,
+        warnings: debug.warnings,
+        errors: debug.errors,
+      },
+    });
     return {
       transcript: '',
       isCorrect: false,
@@ -552,7 +571,7 @@ const handlePronunciation = async (openai: OpenAI | null, payload: AnyObject = {
     debug
   );
 
-  return {
+  const response = {
     transcript: normalizeText(result.transcript) || transcript,
     isCorrect: Boolean(result.isCorrect),
     score: typeof result.score === 'number' ? Math.max(0, Math.min(100, result.score)) : 0,
@@ -560,17 +579,36 @@ const handlePronunciation = async (openai: OpenAI | null, payload: AnyObject = {
     words: Array.isArray(result.words) ? result.words : [],
     debug,
   };
+
+  logEve(requestId, 'pronunciation:done', {
+    transcriptSource: debug.transcriptSource,
+    transcriptionModel: debug.transcriptionModel,
+    chatModel: debug.chatModel,
+    score: response.score,
+    isCorrect: response.isCorrect,
+    words: response.words.length,
+    warnings: debug.warnings.length,
+    errors: debug.errors.length,
+  });
+
+  return response;
 };
 
 const handleGeneratePhrases = async (openai: OpenAI | null, payload: AnyObject = {}) => {
   if (!openai) throw new Error('OPENAI_API_KEY is not set');
 
-  const requestId = buildRequestId('phr');
+  const requestId = normalizeText(payload.requestId) || buildRequestId('phr');
   const debug = createDebug(requestId);
 
   const topic = normalizeText(payload.topic) || 'General';
   const difficulty = normalizeText(payload.difficulty) || 'medium';
   const count = Number(payload.count) > 0 ? Number(payload.count) : 5;
+
+  logEve(requestId, 'phrases:start', {
+    topic,
+    difficulty,
+    count,
+  });
 
   const result = await chatJsonWithFallback<any[]>(
     openai,
@@ -580,23 +618,39 @@ const handleGeneratePhrases = async (openai: OpenAI | null, payload: AnyObject =
     debug
   );
 
-  return (Array.isArray(result) ? result : []).map((item: AnyObject, index: number) => ({
+  const phrases = (Array.isArray(result) ? result : []).map((item: AnyObject, index: number) => ({
     id: `gen_${Date.now()}_${index}`,
     english: normalizeText(item.english),
     portuguese: normalizeText(item.portuguese),
     difficulty: ['easy', 'medium', 'hard'].includes(item.difficulty) ? item.difficulty : 'medium',
     category: normalizeText(item.category) || topic,
   }));
+
+  logEve(requestId, 'phrases:done', {
+    topic,
+    difficulty,
+    returned: phrases.length,
+    chatModel: debug.chatModel,
+    warnings: debug.warnings.length,
+    errors: debug.errors.length,
+  });
+
+  return phrases;
 };
 
 const handleGenerateWords = async (openai: OpenAI | null, payload: AnyObject = {}) => {
   if (!openai) throw new Error('OPENAI_API_KEY is not set');
 
-  const requestId = buildRequestId('word');
+  const requestId = normalizeText(payload.requestId) || buildRequestId('word');
   const debug = createDebug(requestId);
 
   const category = normalizeText(payload.category) || 'General';
   const count = Number(payload.count) > 0 ? Number(payload.count) : 10;
+
+  logEve(requestId, 'words:start', {
+    category,
+    count,
+  });
 
   const result = await chatJsonWithFallback<any[]>(
     openai,
@@ -606,13 +660,23 @@ const handleGenerateWords = async (openai: OpenAI | null, payload: AnyObject = {
     debug
   );
 
-  return (Array.isArray(result) ? result : []).map((item: AnyObject, index: number) => ({
+  const words = (Array.isArray(result) ? result : []).map((item: AnyObject, index: number) => ({
     id: `word_${Date.now()}_${index}`,
     english: normalizeText(item.english),
     portuguese: normalizeText(item.portuguese),
     difficulty: ['easy', 'medium', 'hard'].includes(item.difficulty) ? item.difficulty : 'medium',
     category: normalizeText(item.category) || category,
   }));
+
+  logEve(requestId, 'words:done', {
+    category,
+    returned: words.length,
+    chatModel: debug.chatModel,
+    warnings: debug.warnings.length,
+    errors: debug.errors.length,
+  });
+
+  return words;
 };
 
 export default async function handler(req: any, res: any) {
