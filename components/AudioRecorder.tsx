@@ -23,7 +23,9 @@ const pickSupportedMimeType = (): string => {
 
   for (const type of candidates) {
     try {
-      if ((window as any).MediaRecorder?.isTypeSupported?.(type)) return type;
+      if ((window as any).MediaRecorder?.isTypeSupported?.(type)) {
+        return type;
+      }
     } catch {}
   }
 
@@ -39,12 +41,11 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
     const startTimeRef = useRef<number>(0);
     const recognitionRef = useRef<any>(null);
     const transcriptRef = useRef('');
-    const finalTranscriptRef = useRef('');
     const isStoppingRef = useRef(false);
 
     const cleanupStream = () => {
       if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
+        streamRef.current.getTracks().forEach((track) => track.stop());
         streamRef.current = null;
       }
     };
@@ -53,7 +54,6 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
       mediaRecorderRef.current = null;
       chunksRef.current = [];
       isStoppingRef.current = false;
-      finalTranscriptRef.current = '';
       setIsRecording(false);
     };
 
@@ -69,6 +69,7 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
     const startRecognition = () => {
       const SpeechRecognitionCtor =
         (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
       if (!SpeechRecognitionCtor) return;
 
       try {
@@ -78,23 +79,12 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
         recognition.continuous = true;
 
         recognition.onresult = (event: any) => {
-          let finalTranscript = finalTranscriptRef.current;
-          let interimTranscript = '';
+          const transcript = Array.from(event.results || [])
+            .map((result: any) => result?.[0]?.transcript || '')
+            .join(' ')
+            .trim();
 
-          for (let i = event.resultIndex || 0; i < (event.results?.length || 0); i += 1) {
-            const result = event.results[i];
-            const text = result?.[0]?.transcript?.trim();
-            if (!text) continue;
-
-            if (result.isFinal) {
-              finalTranscript = `${finalTranscript} ${text}`.trim();
-            } else {
-              interimTranscript = `${interimTranscript} ${text}`.trim();
-            }
-          }
-
-          finalTranscriptRef.current = finalTranscript;
-          transcriptRef.current = `${finalTranscript} ${interimTranscript}`.trim();
+          transcriptRef.current = transcript;
         };
 
         recognition.onerror = () => {};
@@ -120,22 +110,19 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
         });
 
         streamRef.current = stream;
-        chunksRef.current = [];
-        transcriptRef.current = '';
-        finalTranscriptRef.current = '';
-        startTimeRef.current = Date.now();
-        isStoppingRef.current = false;
 
         const mimeType = pickSupportedMimeType();
-        if (!(window as any).MediaRecorder) {
-          throw new Error('MediaRecorder is not supported in this browser.');
-        }
-
         const mediaRecorder = mimeType
           ? new MediaRecorder(stream, { mimeType })
           : new MediaRecorder(stream);
 
         mediaRecorderRef.current = mediaRecorder;
+        chunksRef.current = [];
+        transcriptRef.current = '';
+        startTimeRef.current = Date.now();
+        isStoppingRef.current = false;
+
+        startRecognition();
 
         mediaRecorder.ondataavailable = (e) => {
           if (e.data && e.data.size > 0) {
@@ -150,7 +137,7 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
         mediaRecorder.onstop = () => {
           stopRecognition();
 
-          const transcript = transcriptRef.current.trim() || finalTranscriptRef.current.trim();
+          const transcript = transcriptRef.current.trim();
           const duration = Date.now() - startTimeRef.current;
           const finalMimeType = mediaRecorder.mimeType || mimeType || 'audio/webm';
 
@@ -167,6 +154,7 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
                 onAudioRecorded('', '', '', transcript);
                 return;
               }
+
               console.warn('Recording empty, ignored.');
               return;
             }
@@ -174,20 +162,22 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
             const audioUrl = URL.createObjectURL(blob);
             const reader = new FileReader();
 
-            reader.onloadend = () => {
-              const result = reader.result as string;
-              const base64String = result.split(',')[1] || '';
-              onAudioRecorded(base64String, finalMimeType, audioUrl, transcript || undefined);
-            };
-
             reader.readAsDataURL(blob);
+            reader.onloadend = () => {
+              const base64String = ((reader.result as string).split(',')[1]) || '';
+              onAudioRecorded(
+                base64String,
+                finalMimeType,
+                audioUrl,
+                transcript || undefined
+              );
+            };
           } finally {
             cleanupStream();
             cleanupRecorder();
           }
         };
 
-        startRecognition();
         mediaRecorder.start(250);
         setIsRecording(true);
       } catch (err) {
@@ -205,9 +195,6 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
       isStoppingRef.current = true;
 
       try {
-        if (recorder.state === 'recording') {
-          recorder.requestData();
-        }
         if (recorder.state !== 'inactive') {
           recorder.stop();
         }
@@ -219,8 +206,11 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
     };
 
     const toggleRecording = () => {
-      if (isRecording) stopRecording();
-      else startRecording();
+      if (isRecording) {
+        stopRecording();
+      } else {
+        startRecording();
+      }
     };
 
     useImperativeHandle(ref, () => ({
