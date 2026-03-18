@@ -5,6 +5,8 @@ interface AudioRecorderProps {
   onAudioRecorded: (base64: string, mimeType: string, audioUrl: string, transcription?: string) => void;
   isProcessing: boolean;
   disabled: boolean;
+  onRecordingStateChange?: (recording: boolean) => void;
+  onRecorderLog?: (line: string) => void;
 }
 
 export interface AudioRecorderRef {
@@ -13,7 +15,7 @@ export interface AudioRecorderRef {
   isRecording: boolean;
 }
 
-const MIN_RECORDING_DURATION_MS = 500;
+const MIN_DURATION_MS = 500;
 const MIN_BLOB_SIZE_BYTES = 100;
 
 const pickSupportedMimeType = (): string => {
@@ -24,45 +26,47 @@ const pickSupportedMimeType = (): string => {
     'audio/ogg;codecs=opus',
   ];
 
-  for (const type of candidates) {
+  for (const candidate of candidates) {
     try {
-      if ((window as any).MediaRecorder?.isTypeSupported?.(type)) return type;
+      if ((window as any).MediaRecorder?.isTypeSupported?.(candidate)) return candidate;
     } catch {
       // noop
     }
   }
-
   return '';
 };
 
+const getSpeechRecognitionCtor = () =>
+  (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+const makeRunId = () => `rec_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+
 export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
-  ({ onAudioRecorded, isProcessing, disabled }, ref) => {
+  ({ onAudioRecorded, isProcessing, disabled, onRecordingStateChange, onRecorderLog }, ref) => {
     const [isRecording, setIsRecording] = useState(false);
 
-    const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+    const recorderRef = useRef<MediaRecorder | null>(null);
     const streamRef = useRef<MediaStream | null>(null);
     const recognitionRef = useRef<any>(null);
 
     const chunksRef = useRef<Blob[]>([]);
-    const transcriptRef = useRef('');
+    const interimTranscriptRef = useRef('');
     const finalTranscriptRef = useRef('');
-    const startTimeRef = useRef(0);
-    const isStoppingRef = useRef(false);
+    const startedAtRef = useRef(0);
+    const stoppingRef = useRef(false);
+    const runIdRef = useRef('');
 
-    const cleanupStream = () => {
-      if (!streamRef.current) return;
-      streamRef.current.getTracks().forEach(track => track.stop());
-      streamRef.current = null;
+    const emitLog = (stage: string, extra?: Record<string, unknown>) => {
+      const runId = runIdRef.current || 'no-run';
+      const line = `[Recorder ${runId}] ${stage}`;
+      onRecorderLog?.(line);
+      if (extra) console.info(line, extra);
+      else console.info(line);
     };
 
-    const cleanupRecorder = () => {
-      mediaRecorderRef.current = null;
-      chunksRef.current = [];
-      transcriptRef.current = '';
-      finalTranscriptRef.current = '';
-      startTimeRef.current = 0;
-      isStoppingRef.current = false;
-      setIsRecording(false);
+    const notifyRecordingState = (recording: boolean) => {
+      setIsRecording(recording);
+      onRecordingStateChange?.(recording);
     };
 
     const stopRecognition = () => {
@@ -75,17 +79,34 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
       recognitionRef.current = null;
     };
 
-    const startRecognition = () => {
-      const SpeechRecognitionCtor =
-        (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    const stopStream = () => {
+      if (!streamRef.current) return;
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    };
 
-      if (!SpeechRecognitionCtor) return;
+    const resetState = () => {
+      recorderRef.current = null;
+      chunksRef.current = [];
+      interimTranscriptRef.current = '';
+      finalTranscriptRef.current = '';
+      startedAtRef.current = 0;
+      stoppingRef.current = false;
+      notifyRecordingState(false);
+    };
+
+    const startSpeechRecognition = () => {
+      const SpeechRecognitionCtor = getSpeechRecognitionCtor();
+      if (!SpeechRecognitionCtor) {
+        emitLog('SpeechRecognition unavailable on this browser');
+        return;
+      }
 
       try {
         const recognition = new SpeechRecognitionCtor();
         recognition.lang = 'en-US';
-        recognition.interimResults = true;
         recognition.continuous = true;
+        recognition.interimResults = true;
 
         recognition.onresult = (event: any) => {
           let finalTranscript = finalTranscriptRef.current;
@@ -96,40 +117,43 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
             const text = result?.[0]?.transcript?.trim();
             if (!text) continue;
 
-            if (result.isFinal) {
-              finalTranscript = `${finalTranscript} ${text}`.trim();
-            } else {
-              interimTranscript = `${interimTranscript} ${text}`.trim();
-            }
+            if (result.isFinal) finalTranscript = `${finalTranscript} ${text}`.trim();
+            else interimTranscript = `${interimTranscript} ${text}`.trim();
           }
 
           finalTranscriptRef.current = finalTranscript;
-          transcriptRef.current = `${finalTranscript} ${interimTranscript}`.trim();
+          interimTranscriptRef.current = interimTranscript;
         };
 
-        recognition.onerror = () => {};
+        recognition.onerror = (event: any) => {
+          emitLog('SpeechRecognition error', { error: event?.error || 'unknown' });
+        };
+
         recognition.onend = () => {
           recognitionRef.current = null;
         };
 
         recognition.start();
         recognitionRef.current = recognition;
-      } catch {
-        // noop
+      } catch (error) {
+        emitLog('SpeechRecognition start failed', { error: String(error) });
       }
     };
 
     const startRecording = async () => {
       if (isRecording || disabled || isProcessing) return;
 
+      runIdRef.current = makeRunId();
+
       try {
         if (!navigator.mediaDevices?.getUserMedia) {
-          throw new Error('getUserMedia is not supported in this browser.');
+          throw new Error('getUserMedia unsupported');
+        }
+        if (!(window as any).MediaRecorder) {
+          throw new Error('MediaRecorder unsupported');
         }
 
-        if (!(window as any).MediaRecorder) {
-          throw new Error('MediaRecorder is not supported in this browser.');
-        }
+        emitLog('Requesting microphone permission');
 
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: {
@@ -141,50 +165,56 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
 
         streamRef.current = stream;
         chunksRef.current = [];
-        transcriptRef.current = '';
+        interimTranscriptRef.current = '';
         finalTranscriptRef.current = '';
-        startTimeRef.current = Date.now();
-        isStoppingRef.current = false;
+        startedAtRef.current = Date.now();
+        stoppingRef.current = false;
 
         const mimeType = pickSupportedMimeType();
-        const mediaRecorder = mimeType
+        const recorder = mimeType
           ? new MediaRecorder(stream, { mimeType })
           : new MediaRecorder(stream);
 
-        mediaRecorderRef.current = mediaRecorder;
+        recorderRef.current = recorder;
 
-        mediaRecorder.ondataavailable = event => {
+        recorder.ondataavailable = event => {
           if (event.data && event.data.size > 0) {
             chunksRef.current.push(event.data);
           }
         };
 
-        mediaRecorder.onerror = event => {
-          console.error('MediaRecorder error:', event);
+        recorder.onerror = (event: any) => {
+          emitLog('MediaRecorder error', { error: event?.error?.name || 'unknown' });
         };
 
-        mediaRecorder.onstop = () => {
+        recorder.onstop = () => {
           stopRecognition();
 
-          const transcript = transcriptRef.current.trim() || finalTranscriptRef.current.trim();
-          const durationMs = Date.now() - startTimeRef.current;
-          const finalMimeType = mediaRecorder.mimeType || mimeType || 'audio/webm';
+          const transcript = `${finalTranscriptRef.current} ${interimTranscriptRef.current}`.trim();
+          const durationMs = Date.now() - startedAtRef.current;
+          const resolvedMimeType = recorder.mimeType || mimeType || 'audio/webm';
+
+          emitLog('Recorder stopped', {
+            durationMs,
+            chunkCount: chunksRef.current.length,
+            transcriptLength: transcript.length,
+            mimeType: resolvedMimeType,
+          });
 
           try {
-            if (durationMs < MIN_RECORDING_DURATION_MS && !transcript) {
-              console.warn('Recording too short, ignored.');
+            if (durationMs < MIN_DURATION_MS && !transcript) {
+              emitLog('Ignored short recording with empty transcript');
               return;
             }
 
-            const blob = new Blob(chunksRef.current, { type: finalMimeType });
-
+            const blob = new Blob(chunksRef.current, { type: resolvedMimeType });
             if (blob.size < MIN_BLOB_SIZE_BYTES) {
               if (transcript) {
+                emitLog('Blob too small, falling back to transcript');
                 onAudioRecorded('', '', '', transcript);
                 return;
               }
-
-              console.warn('Recording empty, ignored.');
+              emitLog('Ignored empty recording');
               return;
             }
 
@@ -192,59 +222,59 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
             const reader = new FileReader();
 
             reader.onloadend = () => {
-              const result = typeof reader.result === 'string' ? reader.result : '';
-              const base64String = result.split(',')[1] || '';
-              onAudioRecorded(base64String, finalMimeType, audioUrl, transcript || undefined);
+              const encoded = typeof reader.result === 'string' ? reader.result : '';
+              const base64 = encoded.split(',')[1] || '';
+              emitLog('Audio ready for upload', { bytes: blob.size });
+              onAudioRecorded(base64, resolvedMimeType, audioUrl, transcript || undefined);
             };
 
             reader.onerror = () => {
-              if (transcript) {
-                onAudioRecorded('', '', '', transcript);
-              }
+              emitLog('FileReader failed');
+              if (transcript) onAudioRecorded('', '', '', transcript);
             };
 
             reader.readAsDataURL(blob);
           } finally {
-            cleanupStream();
-            cleanupRecorder();
+            stopStream();
+            resetState();
           }
         };
 
-        startRecognition();
-        mediaRecorder.start(250);
-        setIsRecording(true);
+        startSpeechRecognition();
+        recorder.start(250);
+        notifyRecordingState(true);
+        emitLog('Recording started', { mimeType: recorder.mimeType || mimeType || 'audio/webm' });
       } catch (error) {
-        console.error('Error accessing microphone:', error);
+        emitLog('Failed to start recording', { error: String(error) });
         alert('Precisamos de acesso ao microfone para praticar a fala.');
         stopRecognition();
-        cleanupStream();
-        cleanupRecorder();
+        stopStream();
+        resetState();
       }
     };
 
     const stopRecording = () => {
-      const recorder = mediaRecorderRef.current;
-      if (!recorder || !isRecording || isStoppingRef.current) return;
+      const recorder = recorderRef.current;
+      if (!recorder || !isRecording || stoppingRef.current) return;
 
-      isStoppingRef.current = true;
+      stoppingRef.current = true;
+      emitLog('Stopping recording');
 
       try {
         if (recorder.state === 'recording') {
           recorder.requestData();
         }
-
         if (recorder.state !== 'inactive') {
           recorder.stop();
-        } else {
-          cleanupStream();
-          cleanupRecorder();
+          return;
         }
       } catch (error) {
-        console.error('Error stopping recorder:', error);
-        stopRecognition();
-        cleanupStream();
-        cleanupRecorder();
+        emitLog('Failed to stop recording cleanly', { error: String(error) });
       }
+
+      stopRecognition();
+      stopStream();
+      resetState();
     };
 
     const toggleRecording = () => {
@@ -261,7 +291,7 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
     React.useEffect(() => {
       return () => {
         stopRecognition();
-        cleanupStream();
+        stopStream();
       };
     }, []);
 

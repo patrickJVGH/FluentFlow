@@ -1,10 +1,11 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { AppStatus, GameState, Phrase, PronunciationResult, TOPICS, AppMode, UserProfile, ChatMessage } from './types';
-import { validatePronunciation, generateSpeech, processConversationTurn, generatePhrases, generateWords } from './services/geminiService';
+import { validatePronunciation, generatePhrases, generateWords } from './services/geminiService';
+import { converseWithEve, requestEveSpeech } from './services/eveService';
 import { getCoursePhrases, getRandomPhrases } from './phrases';
 import { PhraseCard } from './components/PhraseCard';
-import { AudioRecorder, AudioRecorderRef } from './components/AudioRecorder';
+import { AudioRecorder } from './components/AudioRecorder';
 import { ScoreBoard } from './components/ScoreBoard';
 import { Avatar3D } from './components/Avatar3D';
 import { ProfileSetup } from './components/ProfileSetup';
@@ -16,14 +17,6 @@ import { TopicSelector } from './components/TopicSelector';
 import { BarChart, Loader2, Settings, Volume2, AlertCircle, CheckCircle2, Home, User, Radio, Monitor, MonitorOff, ToggleLeft, ToggleRight, Sparkles } from 'lucide-react';
 
 const USERS_KEY = 'fluentflow_users';
-
-const decodeRawPCM = (data: Uint8Array, ctx: AudioContext, sampleRate: number = 24000): AudioBuffer => {
-  const dataInt16 = new Int16Array(data.buffer, data.byteOffset, data.byteLength / 2);
-  const buffer = ctx.createBuffer(1, dataInt16.length, sampleRate);
-  const channelData = buffer.getChannelData(0);
-  for (let i = 0; i < dataInt16.length; i++) channelData[i] = dataInt16[i] / 32768.0;
-  return buffer;
-};
 
 const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onUpdateUser: (u: UserProfile) => void; existingUsers: UserProfile[] }> = ({ currentUser, onLogout, onUpdateUser, existingUsers }) => {
   const [status, setStatus] = useState<AppStatus>(AppStatus.IDLE);
@@ -52,11 +45,12 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioAnalyserRef = useRef<AnalyserNode | null>(null);
-  const sourceNodeRef = useRef<AudioBufferSourceNode | null>(null);
+  const mediaSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
+  const currentAudioRef = useRef<HTMLAudioElement | null>(null);
   const speechSynthesisUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
-  const audioCacheRef = useRef<Map<string, AudioBuffer>>(new Map());
   const speechRequestIdRef = useRef<number>(0);
   const [analyserForAvatar, setAnalyserForAvatar] = useState<AnalyserNode | null>(null);
+  const [eveDebugLine, setEveDebugLine] = useState('');
 
   const [gameState, setGameState] = useState<GameState>(() => {
     const defaultState: GameState = { score: 0, streak: 0, currentLevel: 1, phrasesCompleted: 0, courseProgressIndex: 0, history: [] };
@@ -85,9 +79,10 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
     const initAudio = async () => {
       try {
         if (audioContextRef.current) return;
-        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
         const analyser = ctx.createAnalyser();
         analyser.fftSize = 256;
+        analyser.smoothingTimeConstant = 0.85;
         analyser.connect(ctx.destination);
         audioContextRef.current = ctx;
         audioAnalyserRef.current = analyser;
@@ -105,21 +100,34 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
     };
   }, []);
 
-  const ensureAudioContext = async () => {
+  const ensureAudioContext = useCallback(async () => {
     if (audioContextRef.current?.state === 'suspended') {
       await audioContextRef.current.resume();
     }
-  };
+  }, []);
 
   const stopAllSpeech = useCallback(() => {
-    speechRequestIdRef.current++; 
-    if (sourceNodeRef.current) {
-      try { sourceNodeRef.current.stop(); } catch (e) {}
-      sourceNodeRef.current = null;
+    speechRequestIdRef.current++;
+
+    if (currentAudioRef.current) {
+      try {
+        currentAudioRef.current.pause();
+      } catch (e) {}
+      currentAudioRef.current.src = '';
+      currentAudioRef.current = null;
     }
+
+    if (mediaSourceRef.current) {
+      try {
+        mediaSourceRef.current.disconnect();
+      } catch (e) {}
+      mediaSourceRef.current = null;
+    }
+
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
     }
+
     speechSynthesisUtteranceRef.current = null;
     setIsAvatarSpeaking(false);
   }, []);
@@ -145,55 +153,95 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
     }
   };
 
-  const speakText = async (text: string) => {
+  const playServerAudio = useCallback(async (base64: string, mimeType: string | null, currentId: number): Promise<boolean> => {
+    if (!base64) return false;
+
+    const context = audioContextRef.current;
+    const analyser = audioAnalyserRef.current;
+    const resolvedMimeType = mimeType || 'audio/mpeg';
+
+    const audio = new Audio(`data:${resolvedMimeType};base64,${base64}`);
+    audio.preload = 'auto';
+    currentAudioRef.current = audio;
+
+    if (context && analyser) {
+      try {
+        const source = context.createMediaElementSource(audio);
+        source.connect(analyser);
+        mediaSourceRef.current = source;
+      } catch (e) {
+        console.warn('[EVE] Could not connect MediaElementSource', e);
+      }
+    }
+
+    audio.onended = () => {
+      if (mediaSourceRef.current) {
+        try { mediaSourceRef.current.disconnect(); } catch (e) {}
+        mediaSourceRef.current = null;
+      }
+      if (currentAudioRef.current === audio) currentAudioRef.current = null;
+      if (currentId === speechRequestIdRef.current) setIsAvatarSpeaking(false);
+    };
+
+    audio.onerror = () => {
+      if (mediaSourceRef.current) {
+        try { mediaSourceRef.current.disconnect(); } catch (e) {}
+        mediaSourceRef.current = null;
+      }
+      if (currentAudioRef.current === audio) currentAudioRef.current = null;
+    };
+
+    try {
+      await ensureAudioContext();
+      await audio.play();
+      return true;
+    } catch (error) {
+      console.warn('[EVE] Audio playback failed', error);
+      if (mediaSourceRef.current) {
+        try { mediaSourceRef.current.disconnect(); } catch (e) {}
+        mediaSourceRef.current = null;
+      }
+      if (currentAudioRef.current === audio) currentAudioRef.current = null;
+      return false;
+    }
+  }, [ensureAudioContext]);
+
+  const speakText = useCallback(async (text: string) => {
     if (!text) return;
 
     stopAllSpeech();
     const currentId = speechRequestIdRef.current;
-    
+
     setIsAvatarSpeaking(true);
     try {
-      await ensureAudioContext();
-      const context = audioContextRef.current;
-      const analyser = audioAnalyserRef.current;
-      if (!context || !analyser) {
+      const speech = await requestEveSpeech(text);
+      if (currentId !== speechRequestIdRef.current) return;
+
+      const debug = speech.debug;
+      setEveDebugLine(
+        `EVE ${debug.requestId} | TTS:${debug.ttsModel || 'browser'} | W:${debug.warnings.length} E:${debug.errors.length}`
+      );
+      console.info('[EVE speech]', debug);
+
+      const played = speech.base64
+        ? await playServerAudio(speech.base64, speech.mimeType, currentId)
+        : false;
+
+      if (!played) {
         if (!speakWithBrowserTts(text, currentId)) {
           setIsAvatarSpeaking(false);
         }
-        return;
       }
-
-      let buffer = audioCacheRef.current.get(text);
-      if (!buffer) {
-        const base64 = await generateSpeech(text);
-        if (currentId !== speechRequestIdRef.current) return;
-        if (!base64) {
-          if (!speakWithBrowserTts(text, currentId)) {
-            setIsAvatarSpeaking(false);
-          }
-          return;
-        }
-        const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
-        buffer = decodeRawPCM(bytes, context);
-        audioCacheRef.current.set(text, buffer);
-      }
-      
-      const source = context.createBufferSource();
-      source.buffer = buffer;
-      source.connect(analyser);
-      source.onended = () => { if (currentId === speechRequestIdRef.current) setIsAvatarSpeaking(false); };
-      sourceNodeRef.current = source;
-      source.start(0);
-    } catch (e) { 
+    } catch (e) {
       if (!speakWithBrowserTts(text, currentId)) {
         setIsAvatarSpeaking(false);
       }
     }
-  };
+  }, [playServerAudio, stopAllSpeech]);
 
   const loadData = useCallback(async (mode: AppMode, topicOverride?: string) => {
     setStatus(AppStatus.LOADING_PHRASES);
-    audioCacheRef.current.clear();
+    setEveDebugLine('');
     stopAllSpeech();
 
     try {
@@ -219,7 +267,7 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
       setPhrases(getRandomPhrases(5));
       setStatus(AppStatus.READY);
     }
-  }, [gameState.courseProgressIndex, currentUser.name, selectedTopic, stopAllSpeech]);
+  }, [gameState.courseProgressIndex, currentUser.name, selectedTopic, speakText, stopAllSpeech]);
 
   useEffect(() => {
     if (appMode) loadData(appMode);
@@ -235,7 +283,12 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
     
     try {
       if (appMode === 'conversation') {
-        const response = await processConversationTurn(base64, mimeType, chatHistory, browserTranscript);
+        const response = await converseWithEve(base64, mimeType, chatHistory, browserTranscript);
+        setEveDebugLine(
+          `EVE ${response.requestId} | STT:${response.debug.transcriptSource}/${response.debug.transcriptionModel || '-'} | CHAT:${response.debug.chatModel || '-'} | W:${response.debug.warnings.length} E:${response.debug.errors.length}`
+        );
+        console.info('[EVE conversation]', response.debug);
+
         if (response.isSilent) {
           setChatHistory(prev => [
             ...prev,
@@ -270,12 +323,24 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
         setStatus(AppStatus.FEEDBACK);
       }
     } catch (e) {
+      setEveDebugLine(`EVE error: ${String((e as any)?.message || e)}`);
+      if (appMode === 'conversation') {
+        setChatHistory(prev => [
+          ...prev,
+          {
+            role: 'model',
+            text: 'I am having a connection problem right now. Please try again.',
+            translation: 'Estou com problema de conexao agora. Tente novamente.'
+          }
+        ]);
+      }
       setStatus(AppStatus.READY);
     }
   };
 
   const handleModeChange = (mode: AppMode | null) => {
     stopAllSpeech();
+    setEveDebugLine('');
     if (mode === 'practice') setShowTopicSelector(true);
     else setAppMode(mode);
     setShowSettings(false);
@@ -379,10 +444,22 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
                 <p className="text-[9px] font-black text-slate-300 uppercase tracking-widest mb-2">
                   {status === AppStatus.PROCESSING_AUDIO ? 'Processando...' : 'Toque no microfone para falar'}
                 </p>
+                {appMode === 'conversation' && eveDebugLine && (
+                  <p className="text-[10px] text-slate-400 mb-2 text-center break-all">
+                    {eveDebugLine}
+                  </p>
+                )}
                 <AudioRecorder 
                   onAudioRecorded={handleAudioRecorded} 
                   isProcessing={status === AppStatus.PROCESSING_AUDIO} 
                   disabled={isAvatarSpeaking || status === AppStatus.LOADING_PHRASES} 
+                  onRecorderLog={(line) => setEveDebugLine(line)}
+                  onRecordingStateChange={(recording) => {
+                    setStatus(prev => {
+                      if (recording) return AppStatus.RECORDING;
+                      return prev === AppStatus.RECORDING ? AppStatus.READY : prev;
+                    });
+                  }}
                 />
               </div>
             </div>
