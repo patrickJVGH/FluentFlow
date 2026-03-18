@@ -420,7 +420,11 @@ const handleEveConversation = async (openai: OpenAI | null, payload: AnyObject =
       debug.warnings.push(...debug.errors.map(error => `conversation_nonfatal:${error}`));
       debug.errors = [];
     }
-    logEve(requestId, 'conversation:no_transcript', { debug });
+    logEve(requestId, 'conversation:no_transcript', {
+      transcriptSource: debug.transcriptSource,
+      warnings: debug.warnings.length,
+      errors: debug.errors.length,
+    });
     return {
       requestId,
       isSilent: true,
@@ -459,14 +463,6 @@ const handleEveConversation = async (openai: OpenAI | null, payload: AnyObject =
     chatModel: debug.chatModel,
     warnings: debug.warnings.length,
     errors: debug.errors.length,
-    warningDetails: debug.warnings,
-    errorDetails: debug.errors,
-  });
-  debug.warnings.forEach((warning, index) => {
-    logEve(requestId, `conversation:warning:${index + 1}`, { warning });
-  });
-  debug.errors.forEach((error, index) => {
-    logEve(requestId, `conversation:error:${index + 1}`, { error });
   });
 
   return {
@@ -505,14 +501,6 @@ const handleEveSpeech = async (openai: OpenAI | null, payload: AnyObject = {}) =
     hasAudio: Boolean(speech.base64),
     warnings: debug.warnings.length,
     errors: debug.errors.length,
-    warningDetails: debug.warnings,
-    errorDetails: debug.errors,
-  });
-  debug.warnings.forEach((warning, index) => {
-    logEve(requestId, `speech:warning:${index + 1}`, { warning });
-  });
-  debug.errors.forEach((error, index) => {
-    logEve(requestId, `speech:error:${index + 1}`, { error });
   });
 
   return {

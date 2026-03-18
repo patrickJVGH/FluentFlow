@@ -283,12 +283,9 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
       if (currentId !== speechRequestIdRef.current) return;
 
       const debug = speech.debug;
-      const firstWarning = debug.warnings[0] ? ` | WARN:${debug.warnings[0].slice(0, 80)}` : '';
-      const firstError = debug.errors[0] ? ` | ERR:${debug.errors[0].slice(0, 80)}` : '';
       setEveDebugLine(
-        `EVE ${debug.requestId} | TTS:${debug.ttsModel || 'browser'} | W:${debug.warnings.length} E:${debug.errors.length}${firstWarning}${firstError}`
+        `EVE ${debug.requestId} | TTS:${debug.ttsModel || 'browser'} | W:${debug.warnings.length} E:${debug.errors.length}`
       );
-      console.info('[EVE speech]', debug);
 
       const played = speech.base64
         ? await playServerAudio(speech.base64, speech.mimeType, currentId)
@@ -296,20 +293,10 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
 
       if (!played) {
         const browserOk = await speakWithBrowserTts(text, currentId);
-        setEveDebugLine(prev =>
-          prev
-            ? `${prev}${browserOk ? ' | FB:browser_ok' : ' | FB:browser_failed'}`
-            : `EVE fallback | ${browserOk ? 'FB:browser_ok' : 'FB:browser_failed'}`
-        );
         if (!browserOk) setIsAvatarSpeaking(false);
       }
     } catch (e) {
       const browserOk = await speakWithBrowserTts(text, currentId);
-      setEveDebugLine(prev =>
-        prev
-          ? `${prev}${browserOk ? ' | FB:browser_ok' : ' | FB:browser_failed'}`
-          : `EVE fallback | ${browserOk ? 'FB:browser_ok' : 'FB:browser_failed'}`
-      );
       if (!browserOk) setIsAvatarSpeaking(false);
     }
   }, [playServerAudio, stopAllSpeech]);
@@ -359,14 +346,9 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
     try {
       if (appMode === 'conversation') {
         const response = await converseWithEve(base64, mimeType, chatHistory, browserTranscript);
-        const firstWarning = response.debug.warnings[0]
-          ? ` | WARN:${response.debug.warnings[0].slice(0, 80)}`
-          : '';
-        const firstError = response.debug.errors[0] ? ` | ERR:${response.debug.errors[0].slice(0, 80)}` : '';
         setEveDebugLine(
-          `EVE ${response.requestId} | STT:${response.debug.transcriptSource}/${response.debug.transcriptionModel || '-'} | CHAT:${response.debug.chatModel || '-'} | W:${response.debug.warnings.length} E:${response.debug.errors.length}${firstWarning}${firstError}`
+          `EVE ${response.requestId} | STT:${response.debug.transcriptSource}/${response.debug.transcriptionModel || '-'} | CHAT:${response.debug.chatModel || '-'} | W:${response.debug.warnings.length} E:${response.debug.errors.length}`
         );
-        console.info('[EVE conversation]', response.debug);
 
         if (response.isSilent) {
           setChatHistory(prev => [
@@ -532,7 +514,6 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
                   onAudioRecorded={handleAudioRecorded} 
                   isProcessing={status === AppStatus.PROCESSING_AUDIO} 
                   disabled={isAvatarSpeaking || status === AppStatus.LOADING_PHRASES} 
-                  onRecorderLog={(line) => setEveDebugLine(line)}
                   onRecordingStateChange={(recording) => {
                     setStatus(prev => {
                       if (recording) return AppStatus.RECORDING;
