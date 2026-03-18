@@ -18,6 +18,7 @@ let transcriptionUnavailable = false;
 let ttsUnavailable = false;
 
 const decodeAudio = (audioBase64: string): Buffer => Buffer.from(audioBase64, 'base64');
+const normalizeTranscript = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
 
 const safeJsonParse = <T>(text: string, fallback: T): T => {
   try {
@@ -49,12 +50,15 @@ const isTranscriptionAccessError = (error: any): boolean => {
   );
 };
 
-const transcribeAudio = async (openai: OpenAI, audioBase64: string, mimeType: string): Promise<TranscriptionResult> => {
+const transcribeAudio = async (openai: OpenAI | null, audioBase64: string, mimeType: string): Promise<TranscriptionResult> => {
   if (disableServerTranscription || transcriptionUnavailable) {
     return { text: '', unavailable: true };
   }
   if (!audioBase64 || !mimeType || typeof audioBase64 !== 'string' || typeof mimeType !== 'string') {
     return { text: '', unavailable: false };
+  }
+  if (!openai) {
+    throw new Error('OPENAI_API_KEY is not set');
   }
 
   const ext = mimeType.includes('webm') ? 'webm' : mimeType.includes('mp4') ? 'm4a' : 'wav';
@@ -169,18 +173,29 @@ export default async function handler(req: any, res: any) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const apiKey = process.env.OPENAI_API_KEY?.trim();
-  if (!apiKey) {
-    return res.status(500).json({ error: 'OPENAI_API_KEY is not set' });
-  }
-  const openai = new OpenAI({ apiKey });
-
   try {
     const { action, payload } = req.body || {};
+    const apiKey = process.env.OPENAI_API_KEY?.trim();
+    const requiresOpenAI =
+      action === 'conversation' ||
+      action === 'pronunciation' ||
+      action === 'generatePhrases' ||
+      action === 'generateWords' ||
+      (action === 'speech' && !disableServerTts && !ttsUnavailable);
+
+    if (!apiKey && requiresOpenAI) {
+      console.error('[api/ai] Missing OPENAI_API_KEY for action', { action });
+      return res.status(500).json({ error: 'OPENAI_API_KEY is not set' });
+    }
+
+    const openai: OpenAI | null = apiKey ? new OpenAI({ apiKey }) : null;
 
     if (action === 'conversation') {
-      const { audioBase64, mimeType, history } = payload || {};
-      const transcriptionResult = await transcribeAudio(openai, audioBase64, mimeType);
+      const { audioBase64, mimeType, history, transcription: clientTranscriptionRaw } = payload || {};
+      const clientTranscription = normalizeTranscript(clientTranscriptionRaw);
+      const transcriptionResult = clientTranscription
+        ? { text: clientTranscription, unavailable: false }
+        : await transcribeAudio(openai, audioBase64, mimeType);
       const transcription = transcriptionResult.text;
 
       if (!transcription) {
@@ -203,7 +218,7 @@ export default async function handler(req: any, res: any) {
 
       const historyText = (history || []).slice(-5).map((h: any) => `${h.role === 'user' ? 'User' : 'Tutor'}: ${h.text}`).join('\n');
       const out = await jsonFromChat(
-        openai,
+        openai!,
         'You are EVE, an English tutor. Return valid JSON only with keys: response, responsePortuguese, feedback, improvement.',
         `Conversation history:\n${historyText}\n\nUser said: "${transcription}"\nRespond naturally in English and provide a PT-BR translation and brief feedback.`,
         {
@@ -225,8 +240,11 @@ export default async function handler(req: any, res: any) {
     }
 
     if (action === 'pronunciation') {
-      const { audioBase64, mimeType, targetPhrase } = payload || {};
-      const transcriptionResult = await transcribeAudio(openai, audioBase64, mimeType);
+      const { audioBase64, mimeType, targetPhrase, transcription: clientTranscriptionRaw } = payload || {};
+      const clientTranscription = normalizeTranscript(clientTranscriptionRaw);
+      const transcriptionResult = clientTranscription
+        ? { text: clientTranscription, unavailable: false }
+        : await transcribeAudio(openai, audioBase64, mimeType);
       const transcript = transcriptionResult.text;
 
       if (!transcript) {
@@ -249,7 +267,7 @@ export default async function handler(req: any, res: any) {
       }
 
       const result = await jsonFromChat(
-        openai,
+        openai!,
         'You are a strict English pronunciation coach. Return JSON only with keys: transcript,isCorrect,score,feedback,words.',
         `Target phrase: "${targetPhrase}"\nUser transcript: "${transcript}"\nEvaluate if pronunciation is correct, assign score 0-100, and return words array with {word,status,phoneticIssue?}. status must be correct or needs_improvement.`,
         {
@@ -283,7 +301,7 @@ export default async function handler(req: any, res: any) {
 
       let speech: any;
       try {
-        speech = await createSpeechWithFallback(openai, text);
+        speech = await createSpeechWithFallback(openai!, text);
       } catch (error: any) {
         if (isTtsAccessError(error)) {
           ttsUnavailable = true;
@@ -302,7 +320,7 @@ export default async function handler(req: any, res: any) {
     if (action === 'generatePhrases') {
       const { topic, difficulty, count = 5 } = payload || {};
       const result = await jsonFromChat<any[]>(
-        openai,
+        openai!,
         'Return JSON array only. Each item must have english, portuguese, difficulty (easy|medium|hard), category.',
         `Generate ${count} English learning phrases about "${topic}" with ${difficulty} difficulty.`,
         []
@@ -322,7 +340,7 @@ export default async function handler(req: any, res: any) {
     if (action === 'generateWords') {
       const { category, count = 10 } = payload || {};
       const result = await jsonFromChat<any[]>(
-        openai,
+        openai!,
         'Return JSON array only. Each item must have english, portuguese, difficulty (easy|medium|hard), category.',
         `Generate ${count} common English words related to ${category}.`,
         []

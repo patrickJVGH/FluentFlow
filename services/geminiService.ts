@@ -18,10 +18,11 @@ const callAiApi = async <T>(action: string, payload: unknown): Promise<T> => {
 export const processConversationTurn = async (
   audioBase64: string,
   mimeType: string,
-  history: ChatMessage[]
+  history: ChatMessage[],
+  transcription?: string
 ): Promise<{ isSilent: boolean; transcription: string; response: string; translation: string; feedback?: string; improvement?: string }> => {
   try {
-    return await callAiApi('conversation', { audioBase64, mimeType, history });
+    return await callAiApi('conversation', { audioBase64, mimeType, history, transcription });
   } catch (error) {
     return { isSilent: false, transcription: '(Error)', response: 'Connection error.', translation: 'Erro de conexão.' };
   }
@@ -30,10 +31,11 @@ export const processConversationTurn = async (
 export const validatePronunciation = async (
   audioBase64: string,
   mimeType: string,
-  targetPhrase: string
+  targetPhrase: string,
+  transcription?: string
 ): Promise<PronunciationResult> => {
   try {
-    return await callAiApi('pronunciation', { audioBase64, mimeType, targetPhrase });
+    return await callAiApi('pronunciation', { audioBase64, mimeType, targetPhrase, transcription });
   } catch (e) {
     return { isCorrect: false, score: 0, feedback: 'Erro ao processar áudio.' };
   }

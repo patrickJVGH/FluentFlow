@@ -228,24 +228,25 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appMode]);
 
-  const handleAudioRecorded = async (base64: string, mimeType: string) => {
-    if (!base64) return;
+  const handleAudioRecorded = async (base64: string, mimeType: string, _audioUrl: string, browserTranscript?: string) => {
+    if (!base64 && !browserTranscript) return;
     await ensureAudioContext();
     setStatus(AppStatus.PROCESSING_AUDIO);
     
     try {
       if (appMode === 'conversation') {
-        const response = await processConversationTurn(base64, mimeType, chatHistory);
+        const response = await processConversationTurn(base64, mimeType, chatHistory, browserTranscript);
         if (response.isSilent) { setStatus(AppStatus.READY); return; }
+        const userTranscript = response.transcription || browserTranscript || '(No transcript)';
         setChatHistory(prev => [...prev, 
-          { role: 'user', text: response.transcription },
+          { role: 'user', text: userTranscript },
           { role: 'model', text: response.response, translation: response.translation, feedback: response.feedback, improvement: response.improvement }
         ]);
         setGameState(prev => ({ ...prev, score: prev.score + 10 })); 
         speakText(response.response);
         setStatus(AppStatus.READY);
       } else {
-        const res = await validatePronunciation(base64, mimeType, phrases[currentPhraseIndex].english);
+        const res = await validatePronunciation(base64, mimeType, phrases[currentPhraseIndex].english, browserTranscript);
         setResult(res);
         if (res.isCorrect) {
           setGameState(prev => ({ 

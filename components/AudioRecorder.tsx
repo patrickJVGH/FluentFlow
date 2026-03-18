@@ -3,7 +3,7 @@ import React, { useState, useRef, useImperativeHandle, forwardRef } from 'react'
 import { Mic, Square, Loader2 } from 'lucide-react';
 
 interface AudioRecorderProps {
-  onAudioRecorded: (base64: string, mimeType: string, audioUrl: string) => void;
+  onAudioRecorded: (base64: string, mimeType: string, audioUrl: string, transcription?: string) => void;
   isProcessing: boolean;
   disabled: boolean;
 }
@@ -20,6 +20,42 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(({
   const chunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
   const startTimeRef = useRef<number>(0);
+  const recognitionRef = useRef<any>(null);
+  const transcriptRef = useRef('');
+
+  const stopRecognition = () => {
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {}
+      recognitionRef.current = null;
+    }
+  };
+
+  const startRecognition = () => {
+    const SpeechRecognitionCtor = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognitionCtor) return;
+
+    try {
+      const recognition = new SpeechRecognitionCtor();
+      recognition.lang = 'en-US';
+      recognition.interimResults = true;
+      recognition.continuous = true;
+      recognition.onresult = (event: any) => {
+        const transcript = Array.from(event.results || [])
+          .map((result: any) => result?.[0]?.transcript || '')
+          .join(' ')
+          .trim();
+        transcriptRef.current = transcript;
+      };
+      recognition.onerror = () => {};
+      recognition.onend = () => {
+        recognitionRef.current = null;
+      };
+      recognition.start();
+      recognitionRef.current = recognition;
+    } catch {}
+  };
 
   const startRecording = async () => {
     if (isRecording || disabled || isProcessing) return;
@@ -31,7 +67,9 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(({
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
       chunksRef.current = [];
+      transcriptRef.current = '';
       startTimeRef.current = Date.now();
+      startRecognition();
 
       mediaRecorder.ondataavailable = (e) => {
         if (e.data.size > 0) {
@@ -40,14 +78,20 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(({
       };
 
       mediaRecorder.onstop = () => {
+        stopRecognition();
+        const transcript = transcriptRef.current.trim();
         const duration = Date.now() - startTimeRef.current;
-        if (duration < 500) {
+        if (duration < 500 && !transcript) {
             console.warn("Recording too short, ignored.");
             return;
         }
 
         const blob = new Blob(chunksRef.current, { type: mediaRecorder.mimeType });
         if (blob.size < 100) {
+            if (transcript) {
+              onAudioRecorded('', '', '', transcript);
+              return;
+            }
             console.warn("Recording empty, ignored.");
             return;
         }
@@ -57,7 +101,7 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(({
         reader.readAsDataURL(blob);
         reader.onloadend = () => {
           const base64String = (reader.result as string).split(',')[1];
-          onAudioRecorded(base64String, mediaRecorder.mimeType, audioUrl);
+          onAudioRecorded(base64String, mediaRecorder.mimeType, audioUrl, transcript || undefined);
         };
       };
 
@@ -74,6 +118,7 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(({
       if (mediaRecorderRef.current.state !== 'inactive') {
         mediaRecorderRef.current.stop();
       }
+      stopRecognition();
       if (streamRef.current) {
          streamRef.current.getTracks().forEach(track => track.stop());
          streamRef.current = null;
@@ -98,6 +143,7 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(({
 
   React.useEffect(() => {
     return () => {
+      stopRecognition();
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop());
       }
