@@ -33,23 +33,59 @@ export interface EveSpeechResponse {
 const createClientRequestId = () =>
   `cli_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 
-const postAiAction = async <T>(action: string, payload: unknown, timeoutMs: number = 45000): Promise<T> => {
+const extractErrorMessage = (error: any): string => String(error?.message || error || 'Unknown error');
+
+const ensureDebugShape = (requestId: string, debug: any): EveDebugInfo => ({
+  requestId: typeof debug?.requestId === 'string' ? debug.requestId : requestId,
+  transcriptSource:
+    debug?.transcriptSource === 'browser' || debug?.transcriptSource === 'server'
+      ? debug.transcriptSource
+      : 'none',
+  transcriptionModel: typeof debug?.transcriptionModel === 'string' ? debug.transcriptionModel : null,
+  chatModel: typeof debug?.chatModel === 'string' ? debug.chatModel : null,
+  ttsModel: typeof debug?.ttsModel === 'string' ? debug.ttsModel : null,
+  warnings: Array.isArray(debug?.warnings) ? debug.warnings.map(String) : [],
+  errors: Array.isArray(debug?.errors) ? debug.errors.map(String) : [],
+});
+
+const postAiAction = async <T>(
+  action: string,
+  payload: { requestId?: string } & Record<string, unknown>,
+  timeoutMs: number = 45000
+): Promise<T> => {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const endpoint = '/api/ai';
+  const requestId = payload.requestId || createClientRequestId();
 
   try {
-    const response = await fetch('/api/ai', {
+    const response = await fetch(endpoint, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-EVE-Request-Id': String(requestId),
+      },
       body: JSON.stringify({ action, payload }),
       signal: controller.signal,
     });
 
-    const json = await response.json().catch(() => ({}));
+    const contentType = response.headers.get('content-type') || '';
+    const raw = await response.text();
+    if (!contentType.includes('application/json')) {
+      const snippet = raw.slice(0, 120).replace(/\s+/g, ' ').trim();
+      throw new Error(`API returned non-JSON (${response.status}) from ${endpoint}: ${snippet || 'empty body'}`);
+    }
+
+    const json = raw ? JSON.parse(raw) : {};
     if (!response.ok) {
       throw new Error((json as any)?.error || `Request failed with status ${response.status}`);
     }
     return json as T;
+  } catch (error: any) {
+    if (error?.name === 'AbortError') {
+      throw new Error(`API timeout (${timeoutMs}ms)`);
+    }
+    throw new Error(extractErrorMessage(error));
   } finally {
     clearTimeout(timeout);
   }
@@ -74,13 +110,27 @@ export const converseWithEve = async (
   const requestId = createClientRequestId();
 
   try {
-    return await postAiAction<EveConversationResponse>('eveConversation', {
+    const raw = await postAiAction<any>('eveConversation', {
       requestId,
       audioBase64,
       mimeType,
       history,
       transcription: browserTranscript,
     });
+
+    const debug = ensureDebugShape(requestId, raw?.debug);
+
+    return {
+      requestId: typeof raw?.requestId === 'string' ? raw.requestId : requestId,
+      isSilent: Boolean(raw?.isSilent),
+      transcription: typeof raw?.transcription === 'string' ? raw.transcription : '',
+      response: typeof raw?.response === 'string' ? raw.response : "I couldn't hear you clearly. Please try again.",
+      translation: typeof raw?.translation === 'string' ? raw.translation : 'Nao consegui te ouvir com clareza. Tente novamente.',
+      feedback: typeof raw?.feedback === 'string' ? raw.feedback : undefined,
+      improvement: typeof raw?.improvement === 'string' ? raw.improvement : undefined,
+      debug,
+      error: typeof raw?.error === 'string' ? raw.error : undefined,
+    };
   } catch (error: any) {
     return {
       requestId,
@@ -90,9 +140,9 @@ export const converseWithEve = async (
       translation: 'Erro de conexao. Tente novamente.',
       debug: {
         ...defaultDebug(requestId),
-        errors: [String(error?.message || error)],
+        errors: [extractErrorMessage(error)],
       },
-      error: String(error?.message || error),
+      error: extractErrorMessage(error),
     };
   }
 };
@@ -101,10 +151,18 @@ export const requestEveSpeech = async (text: string): Promise<EveSpeechResponse>
   const requestId = createClientRequestId();
 
   try {
-    return await postAiAction<EveSpeechResponse>('eveSpeech', {
+    const raw = await postAiAction<any>('eveSpeech', {
       requestId,
       text,
     });
+
+    return {
+      requestId: typeof raw?.requestId === 'string' ? raw.requestId : requestId,
+      base64: typeof raw?.base64 === 'string' ? raw.base64 : null,
+      mimeType: typeof raw?.mimeType === 'string' ? raw.mimeType : null,
+      debug: ensureDebugShape(requestId, raw?.debug),
+      error: typeof raw?.error === 'string' ? raw.error : undefined,
+    };
   } catch (error: any) {
     return {
       requestId,
@@ -112,9 +170,9 @@ export const requestEveSpeech = async (text: string): Promise<EveSpeechResponse>
       mimeType: null,
       debug: {
         ...defaultDebug(requestId),
-        errors: [String(error?.message || error)],
+        errors: [extractErrorMessage(error)],
       },
-      error: String(error?.message || error),
+      error: extractErrorMessage(error),
     };
   }
 };

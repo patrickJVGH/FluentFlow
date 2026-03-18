@@ -43,3 +43,12 @@ Este projeto ja esta preparado para Vercel com frontend Vite + funcao serverless
 ### Importante de seguranca
 
 A chave da OpenAI fica apenas no backend (Vercel Function), nao no bundle do navegador.
+
+## Diagnostico Rapido (EVE)
+
+1. Abra `GET /api/ai` no ambiente deployado.
+2. Confira no Runtime Logs da Vercel linhas com:
+   - `[api/ai] Incoming request`
+   - `[api/eve][...] conversation:start`
+   - `[api/eve][...] speech:start`
+3. No app (modo Conversacao), a linha de debug abaixo do microfone mostra `ERR:...` quando a API retorna erro/non-JSON.

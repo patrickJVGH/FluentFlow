@@ -38,6 +38,14 @@ const buildRequestId = (prefix: string = 'srv'): string =>
 
 const errorMessage = (error: any): string => String(error?.message || error || 'unknown_error');
 
+const resolveIncomingRequestId = (req: any, payload?: AnyObject): string => {
+  const headerId =
+    normalizeText(req?.headers?.['x-eve-request-id']) ||
+    normalizeText(req?.headers?.['X-EVE-Request-Id']);
+  const bodyId = normalizeText(payload?.requestId);
+  return bodyId || headerId || buildRequestId('srv');
+};
+
 const safeJsonParse = <T>(text: string, fallback: T): T => {
   try {
     return JSON.parse(text) as T;
@@ -92,8 +100,8 @@ const createDebug = (requestId: string): EveDebugInfo => ({
 
 const logEve = (requestId: string, stage: string, data?: AnyObject) => {
   const tag = `[api/eve][${requestId}] ${stage}`;
-  if (data) console.info(tag, data);
-  else console.info(tag);
+  if (data) console.log(tag, data);
+  else console.log(tag);
 };
 
 const chatModels = uniqueModels([
@@ -510,6 +518,15 @@ export default async function handler(req: any, res: any) {
 
   try {
     const { action, payload } = req.body || {};
+    const requestId = resolveIncomingRequestId(req, payload || {});
+    res.setHeader('X-EVE-Request-Id', requestId);
+
+    console.log('[api/ai] Incoming request', {
+      method: req?.method,
+      action,
+      requestId,
+    });
+
     const apiKey = normalizeText(process.env.OPENAI_API_KEY);
     const openai = apiKey ? new OpenAI({ apiKey }) : null;
 
@@ -542,6 +559,7 @@ export default async function handler(req: any, res: any) {
       }
 
       default:
+        console.warn('[api/ai] Invalid action', { action, requestId });
         return res.status(400).json({ error: 'Invalid action' });
     }
   } catch (error: any) {

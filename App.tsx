@@ -49,6 +49,7 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
   const speechSynthesisUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const speechRequestIdRef = useRef<number>(0);
+  const speechSafetyTimerRef = useRef<number | null>(null);
   const [analyserForAvatar, setAnalyserForAvatar] = useState<AnalyserNode | null>(null);
   const [eveDebugLine, setEveDebugLine] = useState('');
 
@@ -96,7 +97,12 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
       if ('speechSynthesis' in window) {
         window.speechSynthesis.cancel();
       }
-      if (audioContextRef.current) audioContextRef.current.close();
+      if (audioContextRef.current) {
+        try {
+          audioContextRef.current.close();
+        } catch (e) {}
+        audioContextRef.current = null;
+      }
     };
   }, []);
 
@@ -108,6 +114,11 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
 
   const stopAllSpeech = useCallback(() => {
     speechRequestIdRef.current++;
+
+    if (speechSafetyTimerRef.current !== null) {
+      window.clearTimeout(speechSafetyTimerRef.current);
+      speechSafetyTimerRef.current = null;
+    }
 
     if (currentAudioRef.current) {
       try {
@@ -140,13 +151,24 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
       utterance.rate = 1;
       utterance.pitch = 1;
       utterance.onend = () => {
+        if (speechSafetyTimerRef.current !== null) {
+          window.clearTimeout(speechSafetyTimerRef.current);
+          speechSafetyTimerRef.current = null;
+        }
         if (currentId === speechRequestIdRef.current) setIsAvatarSpeaking(false);
       };
       utterance.onerror = () => {
+        if (speechSafetyTimerRef.current !== null) {
+          window.clearTimeout(speechSafetyTimerRef.current);
+          speechSafetyTimerRef.current = null;
+        }
         if (currentId === speechRequestIdRef.current) setIsAvatarSpeaking(false);
       };
       speechSynthesisUtteranceRef.current = utterance;
       window.speechSynthesis.speak(utterance);
+      speechSafetyTimerRef.current = window.setTimeout(() => {
+        if (currentId === speechRequestIdRef.current) setIsAvatarSpeaking(false);
+      }, 20000);
       return true;
     } catch {
       return false;
@@ -175,6 +197,10 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
     }
 
     audio.onended = () => {
+      if (speechSafetyTimerRef.current !== null) {
+        window.clearTimeout(speechSafetyTimerRef.current);
+        speechSafetyTimerRef.current = null;
+      }
       if (mediaSourceRef.current) {
         try { mediaSourceRef.current.disconnect(); } catch (e) {}
         mediaSourceRef.current = null;
@@ -184,6 +210,10 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
     };
 
     audio.onerror = () => {
+      if (speechSafetyTimerRef.current !== null) {
+        window.clearTimeout(speechSafetyTimerRef.current);
+        speechSafetyTimerRef.current = null;
+      }
       if (mediaSourceRef.current) {
         try { mediaSourceRef.current.disconnect(); } catch (e) {}
         mediaSourceRef.current = null;
@@ -194,6 +224,9 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
     try {
       await ensureAudioContext();
       await audio.play();
+      speechSafetyTimerRef.current = window.setTimeout(() => {
+        if (currentId === speechRequestIdRef.current) setIsAvatarSpeaking(false);
+      }, 20000);
       return true;
     } catch (error) {
       console.warn('[EVE] Audio playback failed', error);
@@ -218,8 +251,9 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
       if (currentId !== speechRequestIdRef.current) return;
 
       const debug = speech.debug;
+      const firstError = debug.errors[0] ? ` | ERR:${debug.errors[0].slice(0, 80)}` : '';
       setEveDebugLine(
-        `EVE ${debug.requestId} | TTS:${debug.ttsModel || 'browser'} | W:${debug.warnings.length} E:${debug.errors.length}`
+        `EVE ${debug.requestId} | TTS:${debug.ttsModel || 'browser'} | W:${debug.warnings.length} E:${debug.errors.length}${firstError}`
       );
       console.info('[EVE speech]', debug);
 
@@ -284,8 +318,9 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
     try {
       if (appMode === 'conversation') {
         const response = await converseWithEve(base64, mimeType, chatHistory, browserTranscript);
+        const firstError = response.debug.errors[0] ? ` | ERR:${response.debug.errors[0].slice(0, 80)}` : '';
         setEveDebugLine(
-          `EVE ${response.requestId} | STT:${response.debug.transcriptSource}/${response.debug.transcriptionModel || '-'} | CHAT:${response.debug.chatModel || '-'} | W:${response.debug.warnings.length} E:${response.debug.errors.length}`
+          `EVE ${response.requestId} | STT:${response.debug.transcriptSource}/${response.debug.transcriptionModel || '-'} | CHAT:${response.debug.chatModel || '-'} | W:${response.debug.warnings.length} E:${response.debug.errors.length}${firstError}`
         );
         console.info('[EVE conversation]', response.debug);
 
