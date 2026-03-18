@@ -413,6 +413,13 @@ const handleEveSpeech = async (openai: OpenAI | null, payload: AnyObject = {}) =
 
   const speech = await synthesizeSpeech(openai, text, debug);
 
+  // Speech action should always degrade gracefully to browser TTS on the client.
+  // Convert server-side TTS failures into warnings to avoid blocking the UX.
+  if (!speech.base64 && debug.errors.length) {
+    debug.warnings.push(...debug.errors.map(error => `speech_nonfatal:${error}`));
+    debug.errors = [];
+  }
+
   logEve(requestId, 'speech:done', {
     ttsModel: debug.ttsModel,
     hasAudio: Boolean(speech.base64),
