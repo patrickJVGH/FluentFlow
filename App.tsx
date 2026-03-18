@@ -251,9 +251,10 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
       if (currentId !== speechRequestIdRef.current) return;
 
       const debug = speech.debug;
+      const firstWarning = debug.warnings[0] ? ` | WARN:${debug.warnings[0].slice(0, 80)}` : '';
       const firstError = debug.errors[0] ? ` | ERR:${debug.errors[0].slice(0, 80)}` : '';
       setEveDebugLine(
-        `EVE ${debug.requestId} | TTS:${debug.ttsModel || 'browser'} | W:${debug.warnings.length} E:${debug.errors.length}${firstError}`
+        `EVE ${debug.requestId} | TTS:${debug.ttsModel || 'browser'} | W:${debug.warnings.length} E:${debug.errors.length}${firstWarning}${firstError}`
       );
       console.info('[EVE speech]', debug);
 
@@ -318,9 +319,12 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
     try {
       if (appMode === 'conversation') {
         const response = await converseWithEve(base64, mimeType, chatHistory, browserTranscript);
+        const firstWarning = response.debug.warnings[0]
+          ? ` | WARN:${response.debug.warnings[0].slice(0, 80)}`
+          : '';
         const firstError = response.debug.errors[0] ? ` | ERR:${response.debug.errors[0].slice(0, 80)}` : '';
         setEveDebugLine(
-          `EVE ${response.requestId} | STT:${response.debug.transcriptSource}/${response.debug.transcriptionModel || '-'} | CHAT:${response.debug.chatModel || '-'} | W:${response.debug.warnings.length} E:${response.debug.errors.length}${firstError}`
+          `EVE ${response.requestId} | STT:${response.debug.transcriptSource}/${response.debug.transcriptionModel || '-'} | CHAT:${response.debug.chatModel || '-'} | W:${response.debug.warnings.length} E:${response.debug.errors.length}${firstWarning}${firstError}`
         );
         console.info('[EVE conversation]', response.debug);
 

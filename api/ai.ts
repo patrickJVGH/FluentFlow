@@ -356,6 +356,8 @@ const handleEveConversation = async (openai: OpenAI | null, payload: AnyObject =
     chatModel: debug.chatModel,
     warnings: debug.warnings.length,
     errors: debug.errors.length,
+    warningDetails: debug.warnings,
+    errorDetails: debug.errors,
   });
 
   return {
@@ -385,6 +387,8 @@ const handleEveSpeech = async (openai: OpenAI | null, payload: AnyObject = {}) =
     hasAudio: Boolean(speech.base64),
     warnings: debug.warnings.length,
     errors: debug.errors.length,
+    warningDetails: debug.warnings,
+    errorDetails: debug.errors,
   });
 
   return {
