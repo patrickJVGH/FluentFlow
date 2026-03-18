@@ -396,6 +396,122 @@ const buildLocalTutorFallback = (transcription: string) => {
   return { response, responsePortuguese, feedback, improvement };
 };
 
+const normalizePronunciationText = (value: string): string =>
+  normalizeText(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9'\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const pronunciationTokens = (value: string): string[] =>
+  normalizePronunciationText(value)
+    .split(' ')
+    .filter(Boolean);
+
+const levenshteinDistance = (left: string, right: string): number => {
+  if (left === right) return 0;
+  if (!left.length) return right.length;
+  if (!right.length) return left.length;
+
+  const rows = Array.from({ length: left.length + 1 }, (_, index) => [index]);
+  for (let column = 0; column <= right.length; column += 1) {
+    rows[0][column] = column;
+  }
+
+  for (let row = 1; row <= left.length; row += 1) {
+    for (let column = 1; column <= right.length; column += 1) {
+      const substitutionCost = left[row - 1] === right[column - 1] ? 0 : 1;
+      rows[row][column] = Math.min(
+        rows[row - 1][column] + 1,
+        rows[row][column - 1] + 1,
+        rows[row - 1][column - 1] + substitutionCost
+      );
+    }
+  }
+
+  return rows[left.length][right.length];
+};
+
+const wordSimilarity = (expected: string, heard: string): number => {
+  if (!expected || !heard) return 0;
+  if (expected === heard) return 1;
+
+  const distance = levenshteinDistance(expected, heard);
+  const maxLength = Math.max(expected.length, heard.length, 1);
+  return Math.max(0, 1 - distance / maxLength);
+};
+
+const buildLocalPronunciationFallback = (targetPhrase: string, transcript: string) => {
+  const normalizedTarget = normalizePronunciationText(targetPhrase);
+  const normalizedTranscript = normalizePronunciationText(transcript);
+  const targetWords = pronunciationTokens(targetPhrase);
+  const spokenWords = pronunciationTokens(transcript);
+
+  if (!targetWords.length) {
+    return {
+      transcript,
+      isCorrect: false,
+      score: 0,
+      feedback: 'Nao encontrei uma frase-alvo valida para comparar.',
+      words: [],
+    };
+  }
+
+  const detailedWords = targetWords.map((word, index) => {
+    const heard = spokenWords[index] || '';
+    const similarity = wordSimilarity(word, heard);
+    const status = similarity >= 0.72 ? 'correct' : 'needs_improvement';
+
+    let phoneticIssue: string | undefined;
+    if (status === 'needs_improvement') {
+      if (!heard) phoneticIssue = 'Palavra nao detectada com clareza.';
+      else if (similarity < 0.45) phoneticIssue = `Ouvi "${heard}" em vez de "${word}".`;
+      else phoneticIssue = `Soou proximo de "${heard}".`;
+    }
+
+    return {
+      word,
+      status,
+      phoneticIssue,
+      similarity,
+    };
+  });
+
+  const averageSimilarity =
+    detailedWords.reduce((sum, item) => sum + item.similarity, 0) / Math.max(detailedWords.length, 1);
+  const lengthPenalty =
+    (Math.abs(spokenWords.length - targetWords.length) / Math.max(targetWords.length, 1)) * 0.2;
+  const exactMatch = normalizedTarget && normalizedTarget === normalizedTranscript;
+  const score = exactMatch
+    ? 100
+    : Math.max(0, Math.round((averageSimilarity - Math.min(lengthPenalty, 0.2)) * 100));
+  const weakWords = detailedWords.filter(item => item.status === 'needs_improvement').map(item => item.word);
+  const isCorrect = score >= 85 && weakWords.length === 0;
+
+  let feedback = 'Boa tentativa. Continue praticando a frase completa.';
+  if (score >= 95) feedback = 'Excelente. A frase ficou muito clara e natural.';
+  else if (score >= 85) feedback = 'Muito bom. Ajuste pequenos detalhes para soar ainda mais natural.';
+  else if (score >= 70) feedback = 'Bom caminho. Algumas palavras ainda precisam de mais clareza.';
+  else if (score >= 50) feedback = 'A base esta certa, mas a pronuncia ainda precisa de repeticao guiada.';
+  else feedback = 'A frase saiu distante do alvo. Repita mais devagar, palavra por palavra.';
+
+  if (weakWords.length) {
+    feedback = `${feedback} Foque em: ${weakWords.slice(0, 3).join(', ')}.`;
+  }
+
+  return {
+    transcript,
+    isCorrect,
+    score,
+    feedback,
+    words: detailedWords.map(({ word, status, phoneticIssue }) => ({
+      word,
+      status,
+      ...(phoneticIssue ? { phoneticIssue } : {}),
+    })),
+  };
+};
+
 const handleEveConversation = async (openai: OpenAI | null, payload: AnyObject = {}) => {
   const requestId = normalizeText(payload.requestId) || buildRequestId('eve');
   const debug = createDebug(requestId);
@@ -555,13 +671,7 @@ const handlePronunciation = async (openai: OpenAI | null, payload: AnyObject = {
     };
   }
 
-  const fallback = {
-    transcript,
-    isCorrect: false,
-    score: 0,
-    feedback: 'Nao foi possivel avaliar a pronuncia agora.',
-    words: [],
-  };
+  const fallback = buildLocalPronunciationFallback(targetPhrase, transcript);
 
   const result = await chatJsonWithFallback(
     openai,
@@ -584,11 +694,13 @@ const handlePronunciation = async (openai: OpenAI | null, payload: AnyObject = {
     transcriptSource: debug.transcriptSource,
     transcriptionModel: debug.transcriptionModel,
     chatModel: debug.chatModel,
+    evaluationMode: debug.chatModel ? 'ai' : 'local',
     score: response.score,
     isCorrect: response.isCorrect,
     words: response.words.length,
     warnings: debug.warnings.length,
     errors: debug.errors.length,
+    warningPreview: debug.warnings[0] || null,
   });
 
   return response;
