@@ -42,6 +42,14 @@ const getSpeechRecognitionCtor = () =>
 
 const makeRunId = () => `rec_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 
+const pickRecognitionLanguage = (): string => {
+  const candidates = [...(navigator.languages || []), navigator.language, 'en-US']
+    .filter(Boolean)
+    .map(value => String(value));
+
+  return candidates.find(value => /^en[-_]/i.test(value)) || candidates[0] || 'en-US';
+};
+
 export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
   ({ onAudioRecorded, isProcessing, disabled, density = 'normal', onRecordingStateChange, onRecorderLog }, ref) => {
     const [isRecording, setIsRecording] = useState(false);
@@ -59,7 +67,12 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
 
     const emitLog = (stage: string, extra?: Record<string, unknown>) => {
       const runId = runIdRef.current || 'no-run';
-      const line = `[Recorder ${runId}] ${stage}`;
+      const compactExtra = extra
+        ? Object.entries(extra)
+            .map(([key, value]) => `${key}:${String(value)}`)
+            .join(' | ')
+        : '';
+      const line = `[Recorder ${runId}] ${stage}${compactExtra ? ` | ${compactExtra}` : ''}`;
       onRecorderLog?.(line);
       if (extra) console.info(line, extra);
       else console.info(line);
@@ -105,9 +118,10 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
 
       try {
         const recognition = new SpeechRecognitionCtor();
-        recognition.lang = 'en-US';
+        recognition.lang = pickRecognitionLanguage();
         recognition.continuous = true;
         recognition.interimResults = true;
+        recognition.maxAlternatives = 1;
 
         recognition.onresult = (event: any) => {
           let finalTranscript = finalTranscriptRef.current;
@@ -132,10 +146,20 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
 
         recognition.onend = () => {
           recognitionRef.current = null;
+          const shouldRestart = !stoppingRef.current && recorderRef.current?.state === 'recording';
+          if (shouldRestart) {
+            emitLog('SpeechRecognition ended; restarting');
+            window.setTimeout(() => {
+              if (!recognitionRef.current && !stoppingRef.current && recorderRef.current?.state === 'recording') {
+                startSpeechRecognition();
+              }
+            }, 150);
+          }
         };
 
         recognition.start();
         recognitionRef.current = recognition;
+        emitLog('SpeechRecognition started', { lang: recognition.lang });
       } catch (error) {
         emitLog('SpeechRecognition start failed', { error: String(error) });
       }

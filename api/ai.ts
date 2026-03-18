@@ -14,6 +14,11 @@ type EveDebugInfo = {
   errors: string[];
 };
 
+type ModelAccessBackoff = {
+  until: number;
+  reason: string;
+};
+
 const envFlag = (value?: string): boolean => {
   if (!value) return false;
   const normalized = value.trim().toLowerCase();
@@ -137,9 +142,26 @@ const disableServerTranscription = envFlag(process.env.DISABLE_SERVER_TRANSCRIPT
 const disableServerTts = envFlag(process.env.DISABLE_SERVER_TTS);
 const buildId = normalizeText(process.env.VERCEL_GIT_COMMIT_SHA).slice(0, 12) || 'local';
 const apiVersion = 'eve-api-2026-03-18-2210';
-let ttsAccessUnavailableForRuntime = false;
-let chatAccessUnavailableForRuntime = false;
-let sttAccessUnavailableForRuntime = false;
+const modelAccessBackoffMs = Math.max(0, Number(process.env.OPENAI_MODEL_ACCESS_BACKOFF_MS || 15000));
+const createModelAccessBackoff = (): ModelAccessBackoff => ({ until: 0, reason: '' });
+const readModelAccessBackoff = (state: ModelAccessBackoff, label: string): string | null => {
+  const remainingMs = state.until - Date.now();
+  if (remainingMs <= 0) return null;
+  const remainingSeconds = Math.max(1, Math.ceil(remainingMs / 1000));
+  return `${label}:${remainingSeconds}s:${state.reason || 'model_access_error'}`;
+};
+const startModelAccessBackoff = (state: ModelAccessBackoff, reason: string) => {
+  if (!modelAccessBackoffMs) return;
+  state.until = Date.now() + modelAccessBackoffMs;
+  state.reason = reason;
+};
+const clearModelAccessBackoff = (state: ModelAccessBackoff) => {
+  state.until = 0;
+  state.reason = '';
+};
+const ttsAccessBackoff = createModelAccessBackoff();
+const chatAccessBackoff = createModelAccessBackoff();
+const sttAccessBackoff = createModelAccessBackoff();
 
 const chatJsonWithFallback = async <T>(
   openai: OpenAI | null,
@@ -148,8 +170,9 @@ const chatJsonWithFallback = async <T>(
   fallback: T,
   debug: EveDebugInfo
 ): Promise<T> => {
-  if (chatAccessUnavailableForRuntime) {
-    debug.warnings.push('server_chat_model_access_unavailable_runtime');
+  const backoffWarning = readModelAccessBackoff(chatAccessBackoff, 'server_chat_backoff_active');
+  if (backoffWarning) {
+    debug.warnings.push(backoffWarning);
     return fallback;
   }
 
@@ -178,6 +201,7 @@ const chatJsonWithFallback = async <T>(
       });
 
       debug.chatModel = model;
+      clearModelAccessBackoff(chatAccessBackoff);
       const content = completion.choices[0]?.message?.content || '';
       return safeJsonParse<T>(content, fallback);
     } catch (error: any) {
@@ -195,8 +219,8 @@ const chatJsonWithFallback = async <T>(
       lastError.toLowerCase().includes('does not have access to model') ||
       lastError.toLowerCase().includes('model_not_found')
     ) {
-      chatAccessUnavailableForRuntime = true;
-      debug.warnings.push('server_chat_disabled_for_runtime_due_model_access');
+      startModelAccessBackoff(chatAccessBackoff, lastError);
+      debug.warnings.push(`server_chat_backoff_started:${Math.max(1, Math.ceil(modelAccessBackoffMs / 1000))}s`);
     } else {
       debug.warnings.push(`chat_unavailable:${lastError}`);
     }
@@ -222,8 +246,9 @@ const resolveTranscript = async (
     return '';
   }
 
-  if (sttAccessUnavailableForRuntime) {
-    debug.warnings.push('server_stt_model_access_unavailable_runtime');
+  const backoffWarning = readModelAccessBackoff(sttAccessBackoff, 'server_stt_backoff_active');
+  if (backoffWarning) {
+    debug.warnings.push(backoffWarning);
     return '';
   }
 
@@ -261,6 +286,7 @@ const resolveTranscript = async (
 
       debug.transcriptSource = 'server';
       debug.transcriptionModel = model;
+      clearModelAccessBackoff(sttAccessBackoff);
       return text;
     } catch (error: any) {
       const message = errorMessage(error);
@@ -277,8 +303,8 @@ const resolveTranscript = async (
       lastError.toLowerCase().includes('does not have access to model') ||
       lastError.toLowerCase().includes('model_not_found')
     ) {
-      sttAccessUnavailableForRuntime = true;
-      debug.warnings.push('server_stt_disabled_for_runtime_due_model_access');
+      startModelAccessBackoff(sttAccessBackoff, lastError);
+      debug.warnings.push(`server_stt_backoff_started:${Math.max(1, Math.ceil(modelAccessBackoffMs / 1000))}s`);
     } else {
       debug.warnings.push(`stt_unavailable:${lastError}`);
     }
@@ -302,8 +328,9 @@ const synthesizeSpeech = async (
     return { base64: null, mimeType: null };
   }
 
-  if (ttsAccessUnavailableForRuntime) {
-    debug.warnings.push('server_tts_model_access_unavailable_runtime');
+  const backoffWarning = readModelAccessBackoff(ttsAccessBackoff, 'server_tts_backoff_active');
+  if (backoffWarning) {
+    debug.warnings.push(backoffWarning);
     return { base64: null, mimeType: null };
   }
 
@@ -325,6 +352,7 @@ const synthesizeSpeech = async (
 
       const audioBuffer = Buffer.from(await speech.arrayBuffer());
       debug.ttsModel = model;
+      clearModelAccessBackoff(ttsAccessBackoff);
       return { base64: audioBuffer.toString('base64'), mimeType: 'audio/mpeg' };
     } catch (error: any) {
       const message = errorMessage(error);
@@ -341,8 +369,8 @@ const synthesizeSpeech = async (
       lastError.toLowerCase().includes('does not have access to model') ||
       lastError.toLowerCase().includes('model_not_found')
     ) {
-      ttsAccessUnavailableForRuntime = true;
-      debug.warnings.push('server_tts_disabled_for_runtime_due_model_access');
+      startModelAccessBackoff(ttsAccessBackoff, lastError);
+      debug.warnings.push(`server_tts_backoff_started:${Math.max(1, Math.ceil(modelAccessBackoffMs / 1000))}s`);
     } else {
       // Keep speech flow alive with browser TTS fallback instead of surfacing a hard error.
       debug.warnings.push(`server_tts_unavailable:${lastError}`);
@@ -540,6 +568,8 @@ const handleEveConversation = async (openai: OpenAI | null, payload: AnyObject =
       transcriptSource: debug.transcriptSource,
       warnings: debug.warnings.length,
       errors: debug.errors.length,
+      warningPreview: debug.warnings[0] || null,
+      errorPreview: debug.errors[0] || null,
     });
     return {
       requestId,
@@ -579,6 +609,8 @@ const handleEveConversation = async (openai: OpenAI | null, payload: AnyObject =
     chatModel: debug.chatModel,
     warnings: debug.warnings.length,
     errors: debug.errors.length,
+    warningPreview: debug.warnings[0] || null,
+    errorPreview: debug.errors[0] || null,
   });
 
   return {
@@ -617,6 +649,8 @@ const handleEveSpeech = async (openai: OpenAI | null, payload: AnyObject = {}) =
     hasAudio: Boolean(speech.base64),
     warnings: debug.warnings.length,
     errors: debug.errors.length,
+    warningPreview: debug.warnings[0] || null,
+    errorPreview: debug.errors[0] || null,
   });
 
   return {

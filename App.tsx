@@ -7,6 +7,7 @@ import {
   evaluatePronunciation,
   requestPracticePhrases,
   requestVocabularyWords,
+  type EveDebugInfo,
 } from './services/eveService';
 import { getCoursePhrases, getRandomPhrases } from './phrases';
 import { PhraseCard } from './components/PhraseCard';
@@ -128,6 +129,30 @@ const normalizeGameState = (stateRaw: unknown): GameState => {
   };
 };
 
+const summarizeDebugMessage = (value?: string | null): string => {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  return text.length > 96 ? `${text.slice(0, 93)}...` : text;
+};
+
+const buildEveDebugLine = (debug: EveDebugInfo): string => {
+  const parts = [
+    `EVE ${debug.requestId}`,
+    `STT:${debug.transcriptSource}/${debug.transcriptionModel || '-'}`,
+    `CHAT:${debug.chatModel || '-'}`,
+    `TTS:${debug.ttsModel || 'browser'}`,
+    `W:${debug.warnings.length}`,
+    `E:${debug.errors.length}`,
+  ];
+
+  const warningPreview = summarizeDebugMessage(debug.warnings[0]);
+  const errorPreview = summarizeDebugMessage(debug.errors[0]);
+  if (warningPreview) parts.push(`WARN:${warningPreview}`);
+  if (errorPreview) parts.push(`ERR:${errorPreview}`);
+
+  return parts.join(' | ');
+};
+
 const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onUpdateUser: (u: UserProfile) => void; existingUsers: UserProfile[] }> = ({ currentUser, onLogout, onUpdateUser, existingUsers }) => {
   const [status, setStatus] = useState<AppStatus>(AppStatus.IDLE);
   const [phrases, setPhrases] = useState<Phrase[]>([]);
@@ -165,6 +190,7 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
   const speechSafetyTimerRef = useRef<number | null>(null);
   const [analyserForAvatar, setAnalyserForAvatar] = useState<AnalyserNode | null>(null);
   const [eveDebugLine, setEveDebugLine] = useState('');
+  const [recorderDebugLine, setRecorderDebugLine] = useState('');
 
   const [gameState, setGameState] = useState<GameState>(() => {
     const defaultState = createDefaultGameState();
@@ -457,9 +483,7 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
       if (currentId !== speechRequestIdRef.current) return;
 
       const debug = speech.debug;
-      setEveDebugLine(
-        `EVE ${debug.requestId} | TTS:${debug.ttsModel || 'browser'} | W:${debug.warnings.length} E:${debug.errors.length}`
-      );
+      setEveDebugLine(buildEveDebugLine(debug));
 
       const played = speech.base64
         ? await playServerAudio(speech.base64, speech.mimeType, currentId)
@@ -478,6 +502,7 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
   const loadData = useCallback(async (mode: AppMode, topicOverride?: string) => {
     setStatus(AppStatus.LOADING_PHRASES);
     setEveDebugLine('');
+    setRecorderDebugLine('');
     stopAllSpeech();
     const fallbackCount = mode === 'words' ? 8 : 5;
 
@@ -527,9 +552,7 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
     try {
       if (appMode === 'conversation') {
         const response = await converseWithEve(base64, mimeType, chatHistory, browserTranscript);
-        setEveDebugLine(
-          `EVE ${response.requestId} | STT:${response.debug.transcriptSource}/${response.debug.transcriptionModel || '-'} | CHAT:${response.debug.chatModel || '-'} | W:${response.debug.warnings.length} E:${response.debug.errors.length}`
-        );
+        setEveDebugLine(buildEveDebugLine(response.debug));
 
         if (response.isSilent) {
           setChatHistory(prev => [
@@ -558,9 +581,7 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
         }
 
         const res = await evaluatePronunciation(base64, mimeType, currentPhrase.english, browserTranscript);
-        setEveDebugLine(
-          `EVE ${res.requestId} | STT:${res.debug.transcriptSource}/${res.debug.transcriptionModel || '-'} | CHAT:${res.debug.chatModel || '-'} | W:${res.debug.warnings.length} E:${res.debug.errors.length}`
-        );
+        setEveDebugLine(buildEveDebugLine(res.debug));
         setResult(res);
         registerProgressActivity({
           scoreDelta: res.isCorrect ? res.score : 0,
@@ -588,6 +609,7 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
   const handleModeChange = (mode: AppMode | null) => {
     stopAllSpeech();
     setEveDebugLine('');
+    setRecorderDebugLine('');
     if (mode === 'practice') setShowTopicSelector(true);
     else setAppMode(mode);
     setShowSettings(false);
@@ -700,11 +722,17 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
                     {eveDebugLine}
                   </p>
                 )}
+                {layoutDensity !== 'ultra-compact' && recorderDebugLine && (
+                  <p className="text-[10px] text-slate-400 mb-2 text-center break-words w-full">
+                    {recorderDebugLine}
+                  </p>
+                )}
                 <AudioRecorder 
                   onAudioRecorded={handleAudioRecorded} 
                   isProcessing={status === AppStatus.PROCESSING_AUDIO} 
                   disabled={isAvatarSpeaking || status === AppStatus.LOADING_PHRASES} 
                   density={layoutDensity}
+                  onRecorderLog={setRecorderDebugLine}
                   onRecordingStateChange={(recording) => {
                     setStatus(prev => {
                       if (recording) return AppStatus.RECORDING;
