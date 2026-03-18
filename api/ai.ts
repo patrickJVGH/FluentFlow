@@ -359,6 +359,12 @@ const handleEveConversation = async (openai: OpenAI | null, payload: AnyObject =
     warningDetails: debug.warnings,
     errorDetails: debug.errors,
   });
+  debug.warnings.forEach((warning, index) => {
+    logEve(requestId, `conversation:warning:${index + 1}`, { warning });
+  });
+  debug.errors.forEach((error, index) => {
+    logEve(requestId, `conversation:error:${index + 1}`, { error });
+  });
 
   return {
     requestId,
@@ -389,6 +395,12 @@ const handleEveSpeech = async (openai: OpenAI | null, payload: AnyObject = {}) =
     errors: debug.errors.length,
     warningDetails: debug.warnings,
     errorDetails: debug.errors,
+  });
+  debug.warnings.forEach((warning, index) => {
+    logEve(requestId, `speech:warning:${index + 1}`, { warning });
+  });
+  debug.errors.forEach((error, index) => {
+    logEve(requestId, `speech:error:${index + 1}`, { error });
   });
 
   return {
