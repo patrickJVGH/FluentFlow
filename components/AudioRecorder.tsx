@@ -23,9 +23,13 @@ const pickSupportedMimeType = (): string => {
 
   for (const type of candidates) {
     try {
+<<<<<<< ours
       if ((window as any).MediaRecorder?.isTypeSupported?.(type)) {
         return type;
       }
+=======
+      if ((window as any).MediaRecorder?.isTypeSupported?.(type)) return type;
+>>>>>>> theirs
     } catch {}
   }
 
@@ -41,11 +45,19 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
     const startTimeRef = useRef<number>(0);
     const recognitionRef = useRef<any>(null);
     const transcriptRef = useRef('');
+<<<<<<< ours
+=======
+    const finalTranscriptRef = useRef('');
+>>>>>>> theirs
     const isStoppingRef = useRef(false);
 
     const cleanupStream = () => {
       if (streamRef.current) {
+<<<<<<< ours
         streamRef.current.getTracks().forEach((track) => track.stop());
+=======
+        streamRef.current.getTracks().forEach(track => track.stop());
+>>>>>>> theirs
         streamRef.current = null;
       }
     };
@@ -54,6 +66,10 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
       mediaRecorderRef.current = null;
       chunksRef.current = [];
       isStoppingRef.current = false;
+<<<<<<< ours
+=======
+      finalTranscriptRef.current = '';
+>>>>>>> theirs
       setIsRecording(false);
     };
 
@@ -69,7 +85,10 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
     const startRecognition = () => {
       const SpeechRecognitionCtor =
         (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+<<<<<<< ours
 
+=======
+>>>>>>> theirs
       if (!SpeechRecognitionCtor) return;
 
       try {
@@ -79,6 +98,7 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
         recognition.continuous = true;
 
         recognition.onresult = (event: any) => {
+<<<<<<< ours
           const transcript = Array.from(event.results || [])
             .map((result: any) => result?.[0]?.transcript || '')
             .join(' ')
@@ -112,17 +132,75 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
         streamRef.current = stream;
 
         const mimeType = pickSupportedMimeType();
+=======
+          let finalTranscript = finalTranscriptRef.current;
+          let interimTranscript = '';
+
+          for (let i = event.resultIndex || 0; i < (event.results?.length || 0); i += 1) {
+            const result = event.results[i];
+            const text = result?.[0]?.transcript?.trim();
+            if (!text) continue;
+
+            if (result.isFinal) {
+              finalTranscript = `${finalTranscript} ${text}`.trim();
+            } else {
+              interimTranscript = `${interimTranscript} ${text}`.trim();
+            }
+          }
+
+          finalTranscriptRef.current = finalTranscript;
+          transcriptRef.current = `${finalTranscript} ${interimTranscript}`.trim();
+        };
+
+        recognition.onerror = () => {};
+        recognition.onend = () => {
+          recognitionRef.current = null;
+        };
+
+        recognition.start();
+        recognitionRef.current = recognition;
+      } catch {}
+    };
+
+    const startRecording = async () => {
+      if (isRecording || disabled || isProcessing) return;
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
+
+        streamRef.current = stream;
+        chunksRef.current = [];
+        transcriptRef.current = '';
+        finalTranscriptRef.current = '';
+        startTimeRef.current = Date.now();
+        isStoppingRef.current = false;
+
+        const mimeType = pickSupportedMimeType();
+        if (!(window as any).MediaRecorder) {
+          throw new Error('MediaRecorder is not supported in this browser.');
+        }
+
+>>>>>>> theirs
         const mediaRecorder = mimeType
           ? new MediaRecorder(stream, { mimeType })
           : new MediaRecorder(stream);
 
         mediaRecorderRef.current = mediaRecorder;
+<<<<<<< ours
         chunksRef.current = [];
         transcriptRef.current = '';
         startTimeRef.current = Date.now();
         isStoppingRef.current = false;
 
         startRecognition();
+=======
+>>>>>>> theirs
 
         mediaRecorder.ondataavailable = (e) => {
           if (e.data && e.data.size > 0) {
@@ -137,13 +215,18 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
         mediaRecorder.onstop = () => {
           stopRecognition();
 
+<<<<<<< ours
           const transcript = transcriptRef.current.trim();
+=======
+          const transcript = transcriptRef.current.trim() || finalTranscriptRef.current.trim();
+>>>>>>> theirs
           const duration = Date.now() - startTimeRef.current;
           const finalMimeType = mediaRecorder.mimeType || mimeType || 'audio/webm';
 
           try {
             if (duration < 500 && !transcript) {
               console.warn('Recording too short, ignored.');
+<<<<<<< ours
               return;
             }
 
@@ -172,12 +255,42 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
                 transcript || undefined
               );
             };
+=======
+              return;
+            }
+
+            const blob = new Blob(chunksRef.current, { type: finalMimeType });
+
+            if (blob.size < 100) {
+              if (transcript) {
+                onAudioRecorded('', '', '', transcript);
+                return;
+              }
+              console.warn('Recording empty, ignored.');
+              return;
+            }
+
+            const audioUrl = URL.createObjectURL(blob);
+            const reader = new FileReader();
+
+            reader.onloadend = () => {
+              const result = reader.result as string;
+              const base64String = result.split(',')[1] || '';
+              onAudioRecorded(base64String, finalMimeType, audioUrl, transcript || undefined);
+            };
+
+            reader.readAsDataURL(blob);
+>>>>>>> theirs
           } finally {
             cleanupStream();
             cleanupRecorder();
           }
         };
 
+<<<<<<< ours
+=======
+        startRecognition();
+>>>>>>> theirs
         mediaRecorder.start(250);
         setIsRecording(true);
       } catch (err) {
@@ -185,6 +298,7 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
         alert('Precisamos de acesso ao microfone para praticar a fala.');
         cleanupStream();
         cleanupRecorder();
+<<<<<<< ours
       }
     };
 
@@ -213,6 +327,36 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
       }
     };
 
+=======
+      }
+    };
+
+    const stopRecording = () => {
+      const recorder = mediaRecorderRef.current;
+      if (!recorder || !isRecording || isStoppingRef.current) return;
+
+      isStoppingRef.current = true;
+
+      try {
+        if (recorder.state === 'recording') {
+          recorder.requestData();
+        }
+        if (recorder.state !== 'inactive') {
+          recorder.stop();
+        }
+      } catch (err) {
+        console.error('Error stopping recorder:', err);
+        cleanupStream();
+        cleanupRecorder();
+      }
+    };
+
+    const toggleRecording = () => {
+      if (isRecording) stopRecording();
+      else startRecording();
+    };
+
+>>>>>>> theirs
     useImperativeHandle(ref, () => ({
       startRecording,
       stopRecording,
