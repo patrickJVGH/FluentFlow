@@ -135,7 +135,10 @@ const transcriptionLanguage = normalizeText(process.env.OPENAI_TRANSCRIPTION_LAN
 const ttsVoice = normalizeText(process.env.OPENAI_TTS_VOICE) || 'alloy';
 const disableServerTranscription = envFlag(process.env.DISABLE_SERVER_TRANSCRIPTION);
 const disableServerTts = envFlag(process.env.DISABLE_SERVER_TTS);
+const buildId = normalizeText(process.env.VERCEL_GIT_COMMIT_SHA).slice(0, 12) || 'local';
 let ttsAccessUnavailableForRuntime = false;
+let chatAccessUnavailableForRuntime = false;
+let sttAccessUnavailableForRuntime = false;
 
 const chatJsonWithFallback = async <T>(
   openai: OpenAI | null,
@@ -144,17 +147,23 @@ const chatJsonWithFallback = async <T>(
   fallback: T,
   debug: EveDebugInfo
 ): Promise<T> => {
+  if (chatAccessUnavailableForRuntime) {
+    debug.warnings.push('server_chat_model_access_unavailable_runtime');
+    return fallback;
+  }
+
   if (!openai) {
-    debug.errors.push('OPENAI_API_KEY is not set for chat');
+    debug.warnings.push('chat_unavailable:OPENAI_API_KEY is not set for chat');
     return fallback;
   }
 
   if (!chatModels.length) {
-    debug.errors.push('No chat models configured');
+    debug.warnings.push('chat_unavailable:No chat models configured');
     return fallback;
   }
 
   let lastError = '';
+  let modelAccessDenied = false;
   for (const model of chatModels) {
     try {
       const completion = await openai.chat.completions.create({
@@ -173,12 +182,24 @@ const chatJsonWithFallback = async <T>(
     } catch (error: any) {
       const message = errorMessage(error);
       lastError = message;
+      if (isModelAccessError(error)) modelAccessDenied = true;
       debug.warnings.push(`chat:${model}:${message}`);
       if (!isRetryableModelError(error)) break;
     }
   }
 
-  if (lastError) debug.errors.push(`chat_failed:${lastError}`);
+  if (lastError) {
+    if (
+      modelAccessDenied ||
+      lastError.toLowerCase().includes('does not have access to model') ||
+      lastError.toLowerCase().includes('model_not_found')
+    ) {
+      chatAccessUnavailableForRuntime = true;
+      debug.warnings.push('server_chat_disabled_for_runtime_due_model_access');
+    } else {
+      debug.warnings.push(`chat_unavailable:${lastError}`);
+    }
+  }
   return fallback;
 };
 
@@ -200,6 +221,11 @@ const resolveTranscript = async (
     return '';
   }
 
+  if (sttAccessUnavailableForRuntime) {
+    debug.warnings.push('server_stt_model_access_unavailable_runtime');
+    return '';
+  }
+
   const audioBase64 = normalizeText(audioBase64Raw);
   const mimeType = normalizeText(mimeTypeRaw);
   if (!audioBase64) {
@@ -208,7 +234,7 @@ const resolveTranscript = async (
   }
 
   if (!openai) {
-    debug.errors.push('OPENAI_API_KEY is not set for transcription');
+    debug.warnings.push('stt_unavailable:OPENAI_API_KEY is not set for transcription');
     return '';
   }
 
@@ -216,6 +242,7 @@ const resolveTranscript = async (
   const audioBuffer = decodeAudio(audioBase64);
 
   let lastError = '';
+  let modelAccessDenied = false;
   for (const model of transcriptionModels) {
     try {
       const audioFile = await toFile(audioBuffer, `audio.${ext}`);
@@ -237,12 +264,24 @@ const resolveTranscript = async (
     } catch (error: any) {
       const message = errorMessage(error);
       lastError = message;
+      if (isModelAccessError(error)) modelAccessDenied = true;
       debug.warnings.push(`stt:${model}:${message}`);
       if (!isRetryableModelError(error)) break;
     }
   }
 
-  if (lastError) debug.errors.push(`stt_failed:${lastError}`);
+  if (lastError) {
+    if (
+      modelAccessDenied ||
+      lastError.toLowerCase().includes('does not have access to model') ||
+      lastError.toLowerCase().includes('model_not_found')
+    ) {
+      sttAccessUnavailableForRuntime = true;
+      debug.warnings.push('server_stt_disabled_for_runtime_due_model_access');
+    } else {
+      debug.warnings.push(`stt_unavailable:${lastError}`);
+    }
+  }
   return '';
 };
 
@@ -324,6 +363,38 @@ const normalizeHistory = (historyRaw: unknown): ChatHistoryItem[] => {
     .filter(Boolean) as ChatHistoryItem[];
 };
 
+const buildLocalTutorFallback = (transcription: string) => {
+  const clean = normalizeText(transcription).replace(/\s+/g, ' ');
+  const words = clean.split(' ').filter(Boolean);
+  const shortInput = words.length < 4;
+  const isGreeting = /\b(hi|hello|hey|good morning|good afternoon|good evening)\b/i.test(clean);
+  const asksHowAreYou = /\bhow are you\b/i.test(clean);
+
+  let response = `Nice try. You said: "${clean}". Can you add one more detail?`;
+  let responsePortuguese = `Boa tentativa. Voce disse: "${clean}". Pode adicionar mais um detalhe?`;
+  let feedback = 'Use complete sentences with subject, verb, and detail.';
+  let improvement = 'Try: "I am practicing English because I want to speak with confidence."';
+
+  if (isGreeting) {
+    response = 'Hello! I am happy to practice with you. How was your day?';
+    responsePortuguese = 'Ola! Estou feliz em praticar com voce. Como foi seu dia?';
+    feedback = 'Great greeting. Ask a follow-up question to keep the conversation going.';
+    improvement = 'Try: "Hi EVE, my day was good. I studied English for 20 minutes."';
+  } else if (asksHowAreYou) {
+    response = 'I am doing well, thank you. What did you do today?';
+    responsePortuguese = 'Estou bem, obrigado. O que voce fez hoje?';
+    feedback = 'Good question. Now answer your own question with one full sentence.';
+    improvement = 'Try: "Today I worked, exercised, and studied English."';
+  } else if (shortInput) {
+    response = `I heard: "${clean}". Can you say the same idea with a longer sentence?`;
+    responsePortuguese = `Eu ouvi: "${clean}". Pode dizer a mesma ideia com uma frase mais longa?`;
+    feedback = 'Speak in longer phrases to improve fluency.';
+    improvement = 'Try to use at least 6 words in your next answer.';
+  }
+
+  return { response, responsePortuguese, feedback, improvement };
+};
+
 const handleEveConversation = async (openai: OpenAI | null, payload: AnyObject = {}) => {
   const requestId = normalizeText(payload.requestId) || buildRequestId('eve');
   const debug = createDebug(requestId);
@@ -344,6 +415,10 @@ const handleEveConversation = async (openai: OpenAI | null, payload: AnyObject =
   );
 
   if (!transcription) {
+    if (debug.errors.length) {
+      debug.warnings.push(...debug.errors.map(error => `conversation_nonfatal:${error}`));
+      debug.errors = [];
+    }
     logEve(requestId, 'conversation:no_transcript', { debug });
     return {
       requestId,
@@ -352,7 +427,7 @@ const handleEveConversation = async (openai: OpenAI | null, payload: AnyObject =
       response: "I couldn't hear you clearly. Please try again.",
       translation: 'Nao consegui te ouvir com clareza. Tente novamente.',
       debug,
-      error: debug.errors.join(' | ') || undefined,
+      error: undefined,
     };
   }
 
@@ -360,12 +435,7 @@ const handleEveConversation = async (openai: OpenAI | null, payload: AnyObject =
     .map(item => `${item.role === 'user' ? 'User' : 'EVE'}: ${item.text}`)
     .join('\n');
 
-  const fallback = {
-    response: "I heard you, but I'm having trouble responding right now.",
-    responsePortuguese: 'Eu te ouvi, mas estou com dificuldade para responder agora.',
-    feedback: 'Try one short sentence and speak clearly.',
-    improvement: '',
-  };
+  const fallback = buildLocalTutorFallback(transcription);
 
   const result = await chatJsonWithFallback(
     openai,
@@ -376,6 +446,7 @@ const handleEveConversation = async (openai: OpenAI | null, payload: AnyObject =
   );
 
   logEve(requestId, 'conversation:done', {
+    buildId,
     transcriptSource: debug.transcriptSource,
     transcriptionModel: debug.transcriptionModel,
     chatModel: debug.chatModel,
@@ -421,6 +492,7 @@ const handleEveSpeech = async (openai: OpenAI | null, payload: AnyObject = {}) =
   }
 
   logEve(requestId, 'speech:done', {
+    buildId,
     ttsModel: debug.ttsModel,
     hasAudio: Boolean(speech.base64),
     warnings: debug.warnings.length,
@@ -551,6 +623,7 @@ export default async function handler(req: any, res: any) {
   if (req.method === 'GET') {
     return res.status(200).json({
       ok: true,
+      buildId,
       hasOpenAIKey: Boolean(normalizeText(process.env.OPENAI_API_KEY)),
       chatModels,
       transcriptionModels,
@@ -570,6 +643,7 @@ export default async function handler(req: any, res: any) {
     res.setHeader('X-EVE-Request-Id', requestId);
 
     console.log('[api/ai] Incoming request', {
+      buildId,
       method: req?.method,
       action,
       requestId,
