@@ -311,7 +311,7 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
           disabled={disabled || isProcessing}
           className={`
             relative ${buttonSizeClass} rounded-full flex items-center justify-center shadow-xl transition-all duration-300 select-none
-            ${disabled ? 'bg-gray-100 cursor-not-allowed text-gray-300 shadow-none ring-0' : ''}
+            ${disabled ? 'bg-slate-200 cursor-not-allowed text-slate-400 shadow-none ring-0' : ''}
             ${!disabled && !isRecording && !isProcessing ? 'bg-indigo-600 text-white hover:bg-indigo-700 hover:scale-105 hover:shadow-indigo-300/40 shadow-indigo-200 ring-4 ring-indigo-50' : ''}
             ${isRecording ? 'bg-red-500 text-white ring-4 ring-red-100 scale-110 shadow-red-200 animate-pulse' : ''}
             ${isProcessing ? 'bg-white border-2 border-indigo-100 text-indigo-500 cursor-wait' : ''}
@@ -329,7 +329,7 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
         <div className={`${isUltraCompact ? 'h-0' : 'h-4'} flex items-center justify-center`}>
           <p
             className={`text-[9px] sm:text-[10px] font-bold uppercase tracking-widest transition-opacity duration-300 ${
-              isRecording ? 'text-red-500' : 'text-gray-400'
+              isRecording ? 'text-red-500' : 'text-slate-500'
             }`}
           >
             {isUltraCompact ? '' : isRecording ? 'Gravando...' : isProcessing ? 'Processando...' : ''}

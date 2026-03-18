@@ -595,7 +595,7 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
 
   return (
     <div className="flex flex-col h-[100dvh] min-h-[100dvh] bg-[#F8FAFC] overflow-hidden font-sans">
-      <header className={`bg-white/80 backdrop-blur-md border-b flex items-center justify-between z-30 shrink-0 ${layoutDensity === 'ultra-compact' ? 'px-3 py-1.5' : 'px-3 sm:px-6 py-2 sm:py-2.5'}`}>
+      <header className={`bg-white/95 backdrop-blur-md border-b border-slate-200 shadow-sm flex items-center justify-between z-30 shrink-0 ${layoutDensity === 'ultra-compact' ? 'px-3 py-1.5' : 'px-3 sm:px-6 py-2 sm:py-2.5'}`}>
         <div className="flex items-center gap-2 sm:gap-3">
           <button 
             onClick={() => setShowProfileSetup(true)}
@@ -637,7 +637,7 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
                 {isAvatarEnabled ? (
                   <Avatar3D isSpeaking={isAvatarSpeaking} isRecording={status === AppStatus.RECORDING} audioAnalyser={analyserForAvatar} />
                 ) : (
-                  <div className="bg-white/40 backdrop-blur-sm px-4 py-2 rounded-2xl border border-white/60">
+                  <div className="bg-white px-4 py-2 rounded-2xl border border-slate-200 shadow-sm">
                     <Radio className={`w-4 h-4 ${isAvatarSpeaking ? 'text-indigo-500 animate-pulse' : 'text-slate-300'}`} />
                   </div>
                 )}
@@ -668,7 +668,7 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
                         <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Gerando frases...</p>
                     </div>
                   ) : status === AppStatus.FEEDBACK && result ? (
-                    <div className="bg-white rounded-[32px] p-6 shadow-xl border border-slate-50 flex flex-col items-center animate-fade-in-up">
+                    <div className="bg-white rounded-[32px] p-6 shadow-[0_18px_45px_rgba(15,23,42,0.08)] border border-slate-100 flex flex-col items-center animate-fade-in-up">
                       <div className={`w-12 h-12 rounded-2xl flex items-center justify-center mb-3 ${result.score > 40 ? 'bg-emerald-50 text-emerald-500' : 'bg-rose-50 text-rose-500'}`}>
                           {result.score > 40 ? <CheckCircle2 /> : <AlertCircle />}
                       </div>
@@ -688,15 +688,15 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
               )}
             </div>
 
-            <div className={`bg-white ${bottomPanelClass} shadow-sm z-30 shrink-0 border-t border-slate-50`}>
+            <div className={`bg-white ${bottomPanelClass} shadow-[0_-12px_30px_rgba(15,23,42,0.05)] z-30 shrink-0 border-t border-slate-100`}>
               <div className="flex flex-col items-center w-full max-w-md mx-auto">
                 {layoutDensity !== 'ultra-compact' && (
-                  <p className="text-[9px] font-black text-slate-300 uppercase tracking-widest mb-2">
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">
                     {status === AppStatus.PROCESSING_AUDIO ? 'Processando...' : 'Toque no microfone para falar'}
                   </p>
                 )}
                 {layoutDensity !== 'ultra-compact' && eveDebugLine && (
-                  <p className="text-[10px] text-slate-400 mb-2 text-center break-words w-full">
+                  <p className="text-[10px] text-slate-500 mb-2 text-center break-words w-full">
                     {eveDebugLine}
                   </p>
                 )}
