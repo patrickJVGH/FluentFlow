@@ -268,6 +268,7 @@ const synthesizeSpeech = async (
   }
 
   let lastError = '';
+  let modelAccessDenied = false;
   for (const model of ttsModels) {
     try {
       const speech = await openai.audio.speech.create({
@@ -283,13 +284,18 @@ const synthesizeSpeech = async (
     } catch (error: any) {
       const message = errorMessage(error);
       lastError = message;
+      if (isModelAccessError(error)) modelAccessDenied = true;
       debug.warnings.push(`tts:${model}:${message}`);
       if (!isRetryableModelError(error)) break;
     }
   }
 
   if (lastError) {
-    if (lastError.toLowerCase().includes('does not have access to model') || lastError.toLowerCase().includes('model_not_found')) {
+    if (
+      modelAccessDenied ||
+      lastError.toLowerCase().includes('does not have access to model') ||
+      lastError.toLowerCase().includes('model_not_found')
+    ) {
       ttsAccessUnavailableForRuntime = true;
       debug.warnings.push('server_tts_disabled_for_runtime_due_model_access');
     } else {
