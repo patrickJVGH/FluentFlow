@@ -236,7 +236,18 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
     try {
       if (appMode === 'conversation') {
         const response = await processConversationTurn(base64, mimeType, chatHistory, browserTranscript);
-        if (response.isSilent) { setStatus(AppStatus.READY); return; }
+        if (response.isSilent) {
+          setChatHistory(prev => [
+            ...prev,
+            {
+              role: 'model',
+              text: response.response || "I couldn't hear you. Could you repeat that?",
+              translation: response.translation || 'Nao consegui te ouvir. Pode repetir?'
+            }
+          ]);
+          setStatus(AppStatus.READY);
+          return;
+        }
         const userTranscript = response.transcription || browserTranscript || '(No transcript)';
         setChatHistory(prev => [...prev, 
           { role: 'user', text: userTranscript },

@@ -10,6 +10,7 @@ const envFlag = (value?: string): boolean => {
 const chatModel = 'gpt-4o-mini';
 const transcriptionModel = 'gpt-4o-mini-transcribe';
 const transcriptionFallbackModels = ['whisper-1'];
+const transcriptionLanguage = process.env.OPENAI_TRANSCRIPTION_LANGUAGE?.trim() || '';
 const ttsModel = process.env.OPENAI_TTS_MODEL?.trim() || 'gpt-4o-mini-tts';
 const ttsFallbackModels = ['tts-1', 'tts-1-hd'];
 const disableServerTranscription = envFlag(process.env.DISABLE_SERVER_TRANSCRIPTION);
@@ -50,28 +51,41 @@ const isTranscriptionAccessError = (error: any): boolean => {
   );
 };
 
-const transcribeAudio = async (openai: OpenAI | null, audioBase64: string, mimeType: string): Promise<TranscriptionResult> => {
+const extensionFromMimeType = (mimeTypeRaw: string): string => {
+  const mimeType = mimeTypeRaw.toLowerCase();
+  if (mimeType.includes('webm')) return 'webm';
+  if (mimeType.includes('ogg') || mimeType.includes('opus')) return 'ogg';
+  if (mimeType.includes('mpeg') || mimeType.includes('mp3')) return 'mp3';
+  if (mimeType.includes('wav')) return 'wav';
+  if (mimeType.includes('flac')) return 'flac';
+  if (mimeType.includes('mp4') || mimeType.includes('m4a') || mimeType.includes('aac')) return 'm4a';
+  return 'webm';
+};
+
+const transcribeAudio = async (openai: OpenAI | null, audioBase64: string, mimeTypeRaw: string): Promise<TranscriptionResult> => {
   if (disableServerTranscription || transcriptionUnavailable) {
     return { text: '', unavailable: true };
   }
-  if (!audioBase64 || !mimeType || typeof audioBase64 !== 'string' || typeof mimeType !== 'string') {
+  if (!audioBase64 || typeof audioBase64 !== 'string') {
     return { text: '', unavailable: false };
   }
   if (!openai) {
     throw new Error('OPENAI_API_KEY is not set');
   }
 
-  const ext = mimeType.includes('webm') ? 'webm' : mimeType.includes('mp4') ? 'm4a' : 'wav';
-  const audioFile = await toFile(decodeAudio(audioBase64), `audio.${ext}`);
+  const mimeType = typeof mimeTypeRaw === 'string' ? mimeTypeRaw : '';
+  const ext = extensionFromMimeType(mimeType);
+  const audioBuffer = decodeAudio(audioBase64);
   const modelCandidates = [transcriptionModel, ...transcriptionFallbackModels.filter(model => model !== transcriptionModel)];
 
   let lastError: any = null;
   for (const model of modelCandidates) {
     try {
+      const audioFile = await toFile(audioBuffer, `audio.${ext}`);
       const tx = await openai.audio.transcriptions.create({
         file: audioFile,
         model,
-        language: 'en'
+        ...(transcriptionLanguage ? { language: transcriptionLanguage } : {})
       });
       return { text: (tx.text || '').trim(), unavailable: false };
     } catch (error: any) {
