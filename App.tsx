@@ -143,36 +143,68 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
     setIsAvatarSpeaking(false);
   }, []);
 
-  const speakWithBrowserTts = (text: string, currentId: number): boolean => {
-    if (!('speechSynthesis' in window)) return false;
-    try {
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = 'en-US';
-      utterance.rate = 1;
-      utterance.pitch = 1;
-      utterance.onend = () => {
-        if (speechSafetyTimerRef.current !== null) {
-          window.clearTimeout(speechSafetyTimerRef.current);
-          speechSafetyTimerRef.current = null;
-        }
-        if (currentId === speechRequestIdRef.current) setIsAvatarSpeaking(false);
-      };
-      utterance.onerror = () => {
-        if (speechSafetyTimerRef.current !== null) {
-          window.clearTimeout(speechSafetyTimerRef.current);
-          speechSafetyTimerRef.current = null;
-        }
-        if (currentId === speechRequestIdRef.current) setIsAvatarSpeaking(false);
-      };
-      speechSynthesisUtteranceRef.current = utterance;
-      window.speechSynthesis.speak(utterance);
-      speechSafetyTimerRef.current = window.setTimeout(() => {
-        if (currentId === speechRequestIdRef.current) setIsAvatarSpeaking(false);
-      }, 20000);
-      return true;
-    } catch {
-      return false;
-    }
+  const speakWithBrowserTts = (text: string, currentId: number): Promise<boolean> => {
+    if (!('speechSynthesis' in window)) return Promise.resolve(false);
+
+    return new Promise(resolve => {
+      try {
+        const synth = window.speechSynthesis;
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = 'en-US';
+        utterance.rate = 1;
+        utterance.pitch = 1;
+        utterance.volume = 1;
+
+        const voices = synth.getVoices();
+        const englishVoice =
+          voices.find(v => /^en[-_]/i.test(v.lang || '')) ||
+          voices.find(v => (v.lang || '').toLowerCase().startsWith('en'));
+        if (englishVoice) utterance.voice = englishVoice;
+
+        let settled = false;
+        const finish = (ok: boolean) => {
+          if (settled) return;
+          settled = true;
+          resolve(ok);
+        };
+
+        utterance.onend = () => {
+          if (speechSafetyTimerRef.current !== null) {
+            window.clearTimeout(speechSafetyTimerRef.current);
+            speechSafetyTimerRef.current = null;
+          }
+          if (currentId === speechRequestIdRef.current) setIsAvatarSpeaking(false);
+          finish(true);
+        };
+
+        utterance.onerror = () => {
+          if (speechSafetyTimerRef.current !== null) {
+            window.clearTimeout(speechSafetyTimerRef.current);
+            speechSafetyTimerRef.current = null;
+          }
+          if (currentId === speechRequestIdRef.current) setIsAvatarSpeaking(false);
+          finish(false);
+        };
+
+        speechSynthesisUtteranceRef.current = utterance;
+        synth.cancel();
+        synth.speak(utterance);
+
+        // Some browsers fail silently; confirm speaking actually started.
+        window.setTimeout(() => {
+          if (!settled && !synth.speaking) {
+            if (currentId === speechRequestIdRef.current) setIsAvatarSpeaking(false);
+            finish(false);
+          }
+        }, 800);
+
+        speechSafetyTimerRef.current = window.setTimeout(() => {
+          if (currentId === speechRequestIdRef.current) setIsAvatarSpeaking(false);
+        }, 20000);
+      } catch {
+        resolve(false);
+      }
+    });
   };
 
   const playServerAudio = useCallback(async (base64: string, mimeType: string | null, currentId: number): Promise<boolean> => {
@@ -263,14 +295,22 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
         : false;
 
       if (!played) {
-        if (!speakWithBrowserTts(text, currentId)) {
-          setIsAvatarSpeaking(false);
-        }
+        const browserOk = await speakWithBrowserTts(text, currentId);
+        setEveDebugLine(prev =>
+          prev
+            ? `${prev}${browserOk ? ' | FB:browser_ok' : ' | FB:browser_failed'}`
+            : `EVE fallback | ${browserOk ? 'FB:browser_ok' : 'FB:browser_failed'}`
+        );
+        if (!browserOk) setIsAvatarSpeaking(false);
       }
     } catch (e) {
-      if (!speakWithBrowserTts(text, currentId)) {
-        setIsAvatarSpeaking(false);
-      }
+      const browserOk = await speakWithBrowserTts(text, currentId);
+      setEveDebugLine(prev =>
+        prev
+          ? `${prev}${browserOk ? ' | FB:browser_ok' : ' | FB:browser_failed'}`
+          : `EVE fallback | ${browserOk ? 'FB:browser_ok' : 'FB:browser_failed'}`
+      );
+      if (!browserOk) setIsAvatarSpeaking(false);
     }
   }, [playServerAudio, stopAllSpeech]);
 

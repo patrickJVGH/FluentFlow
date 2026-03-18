@@ -69,10 +69,15 @@ const extensionFromMimeType = (mimeTypeRaw: string): string => {
 
 const isModelAccessError = (error: any): boolean => {
   const message = errorMessage(error).toLowerCase();
+  const status = Number(error?.status ?? error?.statusCode ?? error?.response?.status ?? 0);
+  const code = String(error?.code || error?.error?.code || '').toLowerCase();
   return (
-    error?.status === 403 ||
+    status === 403 ||
+    code === 'model_not_found' ||
     message.includes('does not have access to model') ||
-    message.includes('model_not_found')
+    message.includes('model_not_found') ||
+    (message.includes('403') && message.includes('access')) ||
+    (message.includes('forbidden') && message.includes('model'))
   );
 };
 
@@ -299,7 +304,8 @@ const synthesizeSpeech = async (
       ttsAccessUnavailableForRuntime = true;
       debug.warnings.push('server_tts_disabled_for_runtime_due_model_access');
     } else {
-      debug.errors.push(`tts_failed:${lastError}`);
+      // Keep speech flow alive with browser TTS fallback instead of surfacing a hard error.
+      debug.warnings.push(`server_tts_unavailable:${lastError}`);
     }
   }
   return { base64: null, mimeType: null };
