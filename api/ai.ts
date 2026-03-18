@@ -7,7 +7,18 @@ const envFlag = (value?: string): boolean => {
   return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
 };
 
-const chatModel = 'gpt-4o-mini';
+const splitModels = (value?: string): string[] =>
+  (value || '')
+    .split(',')
+    .map(model => model.trim())
+    .filter(Boolean);
+
+const chatModel = process.env.OPENAI_CHAT_MODEL?.trim() || 'gpt-4o-mini';
+const chatFallbackModels = (() => {
+  const fromEnv = splitModels(process.env.OPENAI_CHAT_FALLBACK_MODELS);
+  if (fromEnv.length > 0) return fromEnv;
+  return ['gpt-4.1-mini', 'gpt-4.1-nano'];
+})();
 const transcriptionModel = 'gpt-4o-mini-transcribe';
 const transcriptionFallbackModels = ['whisper-1'];
 const transcriptionLanguage = process.env.OPENAI_TRANSCRIPTION_LANGUAGE?.trim() || '';
@@ -15,6 +26,7 @@ const ttsModel = process.env.OPENAI_TTS_MODEL?.trim() || 'gpt-4o-mini-tts';
 const ttsFallbackModels = ['tts-1', 'tts-1-hd'];
 const disableServerTranscription = envFlag(process.env.DISABLE_SERVER_TRANSCRIPTION);
 const disableServerTts = envFlag(process.env.DISABLE_SERVER_TTS);
+let chatUnavailable = false;
 let transcriptionUnavailable = false;
 let ttsUnavailable = false;
 
@@ -32,6 +44,23 @@ const safeJsonParse = <T>(text: string, fallback: T): T => {
 type TranscriptionResult = {
   text: string;
   unavailable: boolean;
+};
+
+const canFallbackChatModel = (error: any): boolean => {
+  const message = String(error?.message || '').toLowerCase();
+  return (
+    error?.status === 403 ||
+    message.includes('does not have access to model') ||
+    message.includes('model_not_found')
+  );
+};
+
+const isChatAccessError = (error: any): boolean => {
+  const message = String(error?.message || '').toLowerCase();
+  return (
+    error?.status === 403 &&
+    (message.includes('does not have access to model') || message.includes('model_not_found'))
+  );
 };
 
 const canFallbackTranscriptionModel = (error: any): boolean => {
@@ -115,18 +144,52 @@ const transcribeAudio = async (openai: OpenAI | null, audioBase64: string, mimeT
 };
 
 const jsonFromChat = async <T>(openai: OpenAI, systemPrompt: string, userPrompt: string, fallback: T): Promise<T> => {
-  const completion = await openai.chat.completions.create({
-    model: chatModel,
-    temperature: 0.2,
-    messages: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt }
-    ],
-    response_format: { type: 'json_object' }
-  });
+  if (chatUnavailable) {
+    return fallback;
+  }
 
-  const content = completion.choices[0]?.message?.content || '';
-  return safeJsonParse<T>(content, fallback);
+  const modelCandidates = [chatModel, ...chatFallbackModels.filter(model => model !== chatModel)];
+  let lastError: any = null;
+
+  for (const model of modelCandidates) {
+    try {
+      const completion = await openai.chat.completions.create({
+        model,
+        temperature: 0.2,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        response_format: { type: 'json_object' }
+      });
+
+      const content = completion.choices[0]?.message?.content || '';
+      return safeJsonParse<T>(content, fallback);
+    } catch (error: any) {
+      lastError = error;
+      if (!canFallbackChatModel(error) || model === modelCandidates[modelCandidates.length - 1]) {
+        if (isChatAccessError(error)) {
+          chatUnavailable = true;
+          console.warn('[api/ai] Disabling chat completions for this runtime due to model access restrictions', {
+            attemptedModels: modelCandidates,
+            message: error?.message
+          });
+          return fallback;
+        }
+        throw error;
+      }
+      console.warn('[api/ai] Chat model unavailable, trying fallback', {
+        model,
+        message: error?.message
+      });
+    }
+  }
+
+  if (isChatAccessError(lastError)) {
+    chatUnavailable = true;
+    return fallback;
+  }
+  throw lastError;
 };
 
 const canFallbackTtsModel = (error: any): boolean => {
@@ -178,6 +241,9 @@ export default async function handler(req: any, res: any) {
     return res.status(200).json({
       ok: true,
       hasOpenAIKey: Boolean(process.env.OPENAI_API_KEY?.trim()),
+      chatModel,
+      chatFallbackModels,
+      chatUnavailable,
       serverTranscriptionDisabled: disableServerTranscription,
       serverTtsDisabled: disableServerTts
     });
