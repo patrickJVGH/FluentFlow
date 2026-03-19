@@ -19,6 +19,11 @@ type ModelAccessBackoff = {
   reason: string;
 };
 
+type CacheEntry<T> = {
+  expiresAt: number;
+  value: T;
+};
+
 const envFlag = (value?: string): boolean => {
   if (!value) return false;
   const normalized = value.trim().toLowerCase();
@@ -142,7 +147,7 @@ const ttsVoice = normalizeText(process.env.OPENAI_TTS_VOICE) || 'alloy';
 const disableServerTranscription = envFlag(process.env.DISABLE_SERVER_TRANSCRIPTION);
 const disableServerTts = envFlag(process.env.DISABLE_SERVER_TTS);
 const buildId = normalizeText(process.env.VERCEL_GIT_COMMIT_SHA).slice(0, 12) || 'local';
-const apiVersion = 'eve-api-2026-03-19-0025';
+const apiVersion = 'eve-api-2026-03-19-0150';
 const modelAccessBackoffMs = Math.max(0, Number(process.env.OPENAI_MODEL_ACCESS_BACKOFF_MS || 15000));
 const createModelAccessBackoff = (): ModelAccessBackoff => ({ until: 0, reason: '' });
 const readModelAccessBackoff = (state: ModelAccessBackoff, label: string): string | null => {
@@ -163,6 +168,41 @@ const clearModelAccessBackoff = (state: ModelAccessBackoff) => {
 const ttsAccessBackoff = createModelAccessBackoff();
 const chatAccessBackoff = createModelAccessBackoff();
 const sttAccessBackoff = createModelAccessBackoff();
+const generationCacheTtlMs = Math.max(60_000, Number(process.env.OPENAI_GENERATION_CACHE_TTL_MS || 6 * 60 * 60 * 1000));
+const generationCacheMaxEntries = Math.max(10, Number(process.env.OPENAI_GENERATION_CACHE_MAX_ENTRIES || 100));
+const generationCache = new Map<string, CacheEntry<AnyObject[]>>();
+
+const buildGenerationCacheKey = (
+  kind: 'phrases' | 'words',
+  values: Record<string, string | number>
+): string => {
+  const suffix = Object.entries(values)
+    .map(([key, value]) => `${key}:${String(value).trim().toLowerCase()}`)
+    .join('|');
+  return `${kind}|${suffix}`;
+};
+
+const readCache = <T>(cache: Map<string, CacheEntry<T>>, key: string): T | null => {
+  const cached = cache.get(key);
+  if (!cached) return null;
+  if (cached.expiresAt <= Date.now()) {
+    cache.delete(key);
+    return null;
+  }
+  return cached.value;
+};
+
+const writeCache = <T>(cache: Map<string, CacheEntry<T>>, key: string, value: T, ttlMs: number, maxEntries: number) => {
+  cache.set(key, {
+    value,
+    expiresAt: Date.now() + ttlMs,
+  });
+
+  if (cache.size <= maxEntries) return;
+
+  const oldestKey = cache.keys().next().value;
+  if (oldestKey) cache.delete(oldestKey);
+};
 
 const chatJsonWithFallback = async <T>(
   openai: OpenAI | null,
@@ -734,21 +774,40 @@ const handleGeneratePhrases = async (openai: OpenAI | null, payload: AnyObject =
     count,
   });
 
-  const result = await chatJsonWithFallback<any[]>(
+  const cacheKey = buildGenerationCacheKey('phrases', { topic, difficulty, count });
+  const cached = readCache(generationCache, cacheKey);
+  if (cached) {
+    logEve(requestId, 'phrases:done', {
+      topic,
+      difficulty,
+      returned: cached.length,
+      chatModel: null,
+      warnings: debug.warnings.length,
+      errors: debug.errors.length,
+      cacheHit: true,
+    });
+    return cached as AnyObject[];
+  }
+
+  const result = await chatJsonWithFallback<{ items?: AnyObject[] }>(
     openai,
-    'Return only a JSON array. Each item must include english, portuguese, difficulty (easy|medium|hard), category.',
+    'Return only JSON object with key "items". items must be an array. Each item must include english, portuguese, difficulty (easy|medium|hard), category.',
     `Generate ${count} English learning phrases about "${topic}" with "${difficulty}" difficulty.`,
-    [],
+    { items: [] },
     debug
   );
 
-  const phrases = (Array.isArray(result) ? result : []).map((item: AnyObject, index: number) => ({
+  const phrases = (Array.isArray(result?.items) ? result.items : []).map((item: AnyObject, index: number) => ({
     id: `gen_${Date.now()}_${index}`,
     english: normalizeText(item.english),
     portuguese: normalizeText(item.portuguese),
     difficulty: ['easy', 'medium', 'hard'].includes(item.difficulty) ? item.difficulty : 'medium',
     category: normalizeText(item.category) || topic,
-  }));
+  })).filter(item => item.english && item.portuguese);
+
+  if (phrases.length) {
+    writeCache(generationCache, cacheKey, phrases, generationCacheTtlMs, generationCacheMaxEntries);
+  }
 
   logEve(requestId, 'phrases:done', {
     topic,
@@ -757,6 +816,7 @@ const handleGeneratePhrases = async (openai: OpenAI | null, payload: AnyObject =
     chatModel: debug.chatModel,
     warnings: debug.warnings.length,
     errors: debug.errors.length,
+    cacheHit: false,
   });
 
   return phrases;
@@ -776,21 +836,39 @@ const handleGenerateWords = async (openai: OpenAI | null, payload: AnyObject = {
     count,
   });
 
-  const result = await chatJsonWithFallback<any[]>(
+  const cacheKey = buildGenerationCacheKey('words', { category, count });
+  const cached = readCache(generationCache, cacheKey);
+  if (cached) {
+    logEve(requestId, 'words:done', {
+      category,
+      returned: cached.length,
+      chatModel: null,
+      warnings: debug.warnings.length,
+      errors: debug.errors.length,
+      cacheHit: true,
+    });
+    return cached as AnyObject[];
+  }
+
+  const result = await chatJsonWithFallback<{ items?: AnyObject[] }>(
     openai,
-    'Return only a JSON array. Each item must include english, portuguese, difficulty (easy|medium|hard), category.',
+    'Return only JSON object with key "items". items must be an array. Each item must include english, portuguese, difficulty (easy|medium|hard), category.',
     `Generate ${count} common English words related to "${category}".`,
-    [],
+    { items: [] },
     debug
   );
 
-  const words = (Array.isArray(result) ? result : []).map((item: AnyObject, index: number) => ({
+  const words = (Array.isArray(result?.items) ? result.items : []).map((item: AnyObject, index: number) => ({
     id: `word_${Date.now()}_${index}`,
     english: normalizeText(item.english),
     portuguese: normalizeText(item.portuguese),
     difficulty: ['easy', 'medium', 'hard'].includes(item.difficulty) ? item.difficulty : 'medium',
     category: normalizeText(item.category) || category,
-  }));
+  })).filter(item => item.english && item.portuguese);
+
+  if (words.length) {
+    writeCache(generationCache, cacheKey, words, generationCacheTtlMs, generationCacheMaxEntries);
+  }
 
   logEve(requestId, 'words:done', {
     category,
@@ -798,6 +876,7 @@ const handleGenerateWords = async (openai: OpenAI | null, payload: AnyObject = {
     chatModel: debug.chatModel,
     warnings: debug.warnings.length,
     errors: debug.errors.length,
+    cacheHit: false,
   });
 
   return words;

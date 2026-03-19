@@ -37,10 +37,20 @@ export interface EvePronunciationResponse extends PronunciationResult {
   error?: string;
 }
 
+type CachedValue<T> = {
+  expiresAt: number;
+  value: T;
+};
+
 const createClientRequestId = () =>
   `cli_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 
 const extractErrorMessage = (error: any): string => String(error?.message || error || 'Unknown error');
+const ttsCacheTtlMs = 30 * 60 * 1000;
+const generationCacheTtlMs = 6 * 60 * 60 * 1000;
+const generationStoragePrefix = 'ff_ai_cache_';
+const generationInFlight = new Map<string, Promise<Phrase[]>>();
+const ttsResponseCache = new Map<string, CachedValue<EveSpeechResponse>>();
 
 const ensureDebugShape = (requestId: string, debug: any): EveDebugInfo => ({
   requestId: typeof debug?.requestId === 'string' ? debug.requestId : requestId,
@@ -107,6 +117,62 @@ const defaultDebug = (requestId: string): EveDebugInfo => ({
 
 const totalTextLength = (values: Array<string | undefined | null>): number =>
   values.reduce((sum, value) => sum + String(value || '').trim().length, 0);
+
+const readLocalCache = <T>(key: string): T | null => {
+  if (typeof window === 'undefined') return null;
+
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const cached = JSON.parse(raw) as CachedValue<T>;
+    if (!cached?.expiresAt || cached.expiresAt <= Date.now()) {
+      localStorage.removeItem(key);
+      return null;
+    }
+    return cached.value;
+  } catch {
+    return null;
+  }
+};
+
+const writeLocalCache = <T>(key: string, value: T, ttlMs: number) => {
+  if (typeof window === 'undefined') return;
+
+  try {
+    const payload: CachedValue<T> = {
+      value,
+      expiresAt: Date.now() + ttlMs,
+    };
+    localStorage.setItem(key, JSON.stringify(payload));
+  } catch {
+    // Ignore storage quota issues. Network request remains the fallback.
+  }
+};
+
+const buildGenerationCacheKey = (kind: 'phrases' | 'words', values: Array<string | number>): string =>
+  `${generationStoragePrefix}${kind}:${values.map(value => String(value).trim().toLowerCase()).join(':')}`;
+
+const readTtsCache = (key: string): EveSpeechResponse | null => {
+  const cached = ttsResponseCache.get(key);
+  if (!cached) return null;
+  if (cached.expiresAt <= Date.now()) {
+    ttsResponseCache.delete(key);
+    return null;
+  }
+  return cached.value;
+};
+
+const writeTtsCache = (key: string, value: EveSpeechResponse) => {
+  ttsResponseCache.set(key, {
+    value,
+    expiresAt: Date.now() + ttsCacheTtlMs,
+  });
+
+  if (ttsResponseCache.size <= 24) return;
+
+  const oldestKey = ttsResponseCache.keys().next().value;
+  if (oldestKey) ttsResponseCache.delete(oldestKey);
+};
 
 const normalizePhraseList = (items: unknown, fallbackCategory: string): Phrase[] => {
   if (!Array.isArray(items)) return [];
@@ -207,6 +273,18 @@ export const converseWithEve = async (
 export const requestEveSpeech = async (text: string): Promise<EveSpeechResponse> => {
   const requestId = createClientRequestId();
   const requestTextChars = text.trim().length;
+  const cacheKey = text.trim().toLowerCase();
+  const cached = cacheKey ? readTtsCache(cacheKey) : null;
+  if (cached) {
+    return {
+      ...cached,
+      requestId,
+      debug: {
+        ...cached.debug,
+        requestId,
+      },
+    };
+  }
 
   try {
     const raw = await postAiAction<any>('eveSpeech', {
@@ -227,13 +305,19 @@ export const requestEveSpeech = async (text: string): Promise<EveSpeechResponse>
       errors: debug.errors.length,
     });
 
-    return {
+    const response = {
       requestId: typeof raw?.requestId === 'string' ? raw.requestId : requestId,
       base64,
       mimeType: typeof raw?.mimeType === 'string' ? raw.mimeType : null,
       debug,
       error: typeof raw?.error === 'string' ? raw.error : undefined,
     };
+
+    if (cacheKey && response.base64) {
+      writeTtsCache(cacheKey, response);
+    }
+
+    return response;
   } catch (error: any) {
     recordAiUsage('speech', {
       calls: 1,
@@ -333,37 +417,51 @@ export const requestPracticePhrases = async (
 ): Promise<Phrase[]> => {
   const requestId = createClientRequestId();
   const requestTextChars = totalTextLength([topic, difficulty, String(count)]);
+  const cacheKey = buildGenerationCacheKey('phrases', [topic, difficulty, count]);
+  const cached = readLocalCache<Phrase[]>(cacheKey);
+  if (cached?.length) return cached;
 
-  try {
-    const raw = await postAiAction<any>('generatePhrases', {
-      requestId,
-      topic,
-      difficulty,
-      count,
-    });
-    const phrases = normalizePhraseList(raw, topic);
-    if (!phrases.length) {
-      throw new Error('No phrases returned from generatePhrases');
+  const inFlight = generationInFlight.get(cacheKey);
+  if (inFlight) return inFlight;
+
+  const request = (async () => {
+    try {
+      const raw = await postAiAction<any>('generatePhrases', {
+        requestId,
+        topic,
+        difficulty,
+        count,
+      });
+      const phrases = normalizePhraseList(raw, topic);
+      if (!phrases.length) {
+        throw new Error('No phrases returned from generatePhrases');
+      }
+
+      recordAiUsage('generatePhrases', {
+        calls: 1,
+        successfulCalls: 1,
+        requestTextChars,
+        responseTextChars: phrases.reduce((sum, phrase) => sum + phrase.english.length + phrase.portuguese.length, 0),
+        itemsReturned: phrases.length,
+      });
+
+      writeLocalCache(cacheKey, phrases, generationCacheTtlMs);
+      return phrases;
+    } catch (error) {
+      recordAiUsage('generatePhrases', {
+        calls: 1,
+        failedCalls: 1,
+        requestTextChars,
+        errors: 1,
+      });
+      throw error;
+    } finally {
+      generationInFlight.delete(cacheKey);
     }
+  })();
 
-    recordAiUsage('generatePhrases', {
-      calls: 1,
-      successfulCalls: 1,
-      requestTextChars,
-      responseTextChars: phrases.reduce((sum, phrase) => sum + phrase.english.length + phrase.portuguese.length, 0),
-      itemsReturned: phrases.length,
-    });
-
-    return phrases;
-  } catch (error) {
-    recordAiUsage('generatePhrases', {
-      calls: 1,
-      failedCalls: 1,
-      requestTextChars,
-      errors: 1,
-    });
-    throw error;
-  }
+  generationInFlight.set(cacheKey, request);
+  return request;
 };
 
 export const requestVocabularyWords = async (
@@ -372,34 +470,48 @@ export const requestVocabularyWords = async (
 ): Promise<Phrase[]> => {
   const requestId = createClientRequestId();
   const requestTextChars = totalTextLength([category, String(count)]);
+  const cacheKey = buildGenerationCacheKey('words', [category, count]);
+  const cached = readLocalCache<Phrase[]>(cacheKey);
+  if (cached?.length) return cached;
 
-  try {
-    const raw = await postAiAction<any>('generateWords', {
-      requestId,
-      category,
-      count,
-    });
-    const phrases = normalizePhraseList(raw, category);
-    if (!phrases.length) {
-      throw new Error('No words returned from generateWords');
+  const inFlight = generationInFlight.get(cacheKey);
+  if (inFlight) return inFlight;
+
+  const request = (async () => {
+    try {
+      const raw = await postAiAction<any>('generateWords', {
+        requestId,
+        category,
+        count,
+      });
+      const phrases = normalizePhraseList(raw, category);
+      if (!phrases.length) {
+        throw new Error('No words returned from generateWords');
+      }
+
+      recordAiUsage('generateWords', {
+        calls: 1,
+        successfulCalls: 1,
+        requestTextChars,
+        responseTextChars: phrases.reduce((sum, phrase) => sum + phrase.english.length + phrase.portuguese.length, 0),
+        itemsReturned: phrases.length,
+      });
+
+      writeLocalCache(cacheKey, phrases, generationCacheTtlMs);
+      return phrases;
+    } catch (error) {
+      recordAiUsage('generateWords', {
+        calls: 1,
+        failedCalls: 1,
+        requestTextChars,
+        errors: 1,
+      });
+      throw error;
+    } finally {
+      generationInFlight.delete(cacheKey);
     }
+  })();
 
-    recordAiUsage('generateWords', {
-      calls: 1,
-      successfulCalls: 1,
-      requestTextChars,
-      responseTextChars: phrases.reduce((sum, phrase) => sum + phrase.english.length + phrase.portuguese.length, 0),
-      itemsReturned: phrases.length,
-    });
-
-    return phrases;
-  } catch (error) {
-    recordAiUsage('generateWords', {
-      calls: 1,
-      failedCalls: 1,
-      requestTextChars,
-      errors: 1,
-    });
-    throw error;
-  }
+  generationInFlight.set(cacheKey, request);
+  return request;
 };
