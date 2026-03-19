@@ -9,6 +9,14 @@ interface LoginScreenProps {
   onCreateNew: () => void;
 }
 
+const safeAreaPageStyle: React.CSSProperties = {
+  boxSizing: 'border-box',
+  paddingTop: 'env(safe-area-inset-top, 0px)',
+  paddingRight: 'env(safe-area-inset-right, 0px)',
+  paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+  paddingLeft: 'env(safe-area-inset-left, 0px)',
+};
+
 export const LoginScreen: React.FC<LoginScreenProps> = ({ users, onLogin, onCreateNew }) => {
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [adminUser, setAdminUser] = useState('');
@@ -36,7 +44,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ users, onLogin, onCrea
 
   if (showAdminLogin) {
     return (
-      <div className="min-h-[100dvh] bg-slate-50 p-4 sm:p-6 overflow-y-auto">
+      <div className="min-h-[100dvh] bg-slate-50 p-4 sm:p-6 overflow-y-auto" style={safeAreaPageStyle}>
         <div className="min-h-[calc(100dvh-2rem)] sm:min-h-[calc(100dvh-3rem)] flex items-start sm:items-center justify-center">
           <div className="bg-white w-full max-w-sm rounded-[26px] sm:rounded-[32px] shadow-2xl p-6 sm:p-8 border border-slate-100 animate-fade-in-up max-h-[calc(100dvh-2rem)] sm:max-h-none overflow-y-auto">
             <div className="flex flex-col items-center mb-8">
@@ -49,14 +57,14 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ users, onLogin, onCrea
                 type="text"
                 value={adminUser}
                 onChange={e => setAdminUser(e.target.value)}
-                className="w-full p-4 bg-slate-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-semibold text-sm"
+                className="w-full p-4 bg-slate-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-semibold text-base sm:text-sm"
                 placeholder="Usuario"
               />
               <input
                 type="password"
                 value={adminPass}
                 onChange={e => setAdminPass(e.target.value)}
-                className="w-full p-4 bg-slate-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-semibold text-sm"
+                className="w-full p-4 bg-slate-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-semibold text-base sm:text-sm"
                 placeholder="Senha"
               />
               {error && <p className="text-rose-500 text-[10px] font-bold text-center uppercase tracking-widest">{error}</p>}
@@ -78,7 +86,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ users, onLogin, onCrea
   }
 
   return (
-    <div className="min-h-[100dvh] bg-slate-50 flex items-start sm:items-center justify-center p-4 sm:p-6 overflow-y-auto">
+    <div className="min-h-[100dvh] bg-slate-50 flex items-start sm:items-center justify-center p-4 sm:p-6 overflow-y-auto" style={safeAreaPageStyle}>
       <div className="w-full max-w-[400px] bg-white rounded-[28px] sm:rounded-[40px] shadow-2xl overflow-hidden flex flex-col animate-fade-in-up max-h-[calc(100dvh-2rem)] sm:max-h-none">
         <div className="bg-white px-6 sm:px-8 pt-8 sm:pt-12 pb-8 sm:pb-12 text-center">
           <Logo size={56} className="mx-auto mb-5 sm:mb-6" />

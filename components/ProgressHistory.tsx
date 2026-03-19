@@ -7,6 +7,14 @@ interface ProgressHistoryProps {
   onClose: () => void;
 }
 
+const safeAreaOverlayStyle: React.CSSProperties = {
+  boxSizing: 'border-box',
+  paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)',
+  paddingRight: 'calc(env(safe-area-inset-right, 0px) + 0.75rem)',
+  paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.75rem)',
+  paddingLeft: 'calc(env(safe-area-inset-left, 0px) + 0.75rem)',
+};
+
 export const ProgressHistory: React.FC<ProgressHistoryProps> = ({ state, onClose }) => {
   const formatChartDate = (dateValue: string) => {
     const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateValue);
@@ -60,7 +68,7 @@ export const ProgressHistory: React.FC<ProgressHistoryProps> = ({ state, onClose
   const nextRank = USER_RANKS.find(r => r.minScore > state.score);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60 backdrop-blur-sm p-3 sm:p-4 animate-fade-in-up">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60 backdrop-blur-sm p-3 sm:p-4 animate-fade-in-up" style={safeAreaOverlayStyle}>
       <div className="bg-white w-full max-w-md rounded-[26px] sm:rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92dvh]">
         <div className="bg-indigo-600 px-4 sm:px-6 py-4 sm:py-5 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">

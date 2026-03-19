@@ -7,6 +7,14 @@ interface TopicSelectorProps {
   onClose: () => void;
 }
 
+const safeAreaOverlayStyle: React.CSSProperties = {
+  boxSizing: 'border-box',
+  paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)',
+  paddingRight: 'calc(env(safe-area-inset-right, 0px) + 0.75rem)',
+  paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.75rem)',
+  paddingLeft: 'calc(env(safe-area-inset-left, 0px) + 0.75rem)',
+};
+
 export const TopicSelector: React.FC<TopicSelectorProps> = ({ onSelect, onClose }) => {
   const [search, setSearch] = useState('');
 
@@ -15,7 +23,7 @@ export const TopicSelector: React.FC<TopicSelectorProps> = ({ onSelect, onClose 
   );
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 backdrop-blur-md p-3 sm:p-4 animate-fade-in-up">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 backdrop-blur-md p-3 sm:p-4 animate-fade-in-up" style={safeAreaOverlayStyle}>
       <div className="bg-white w-full max-w-md rounded-[28px] sm:rounded-[40px] shadow-2xl overflow-hidden flex flex-col max-h-[92dvh]">
         <div className="px-5 sm:px-8 pt-5 sm:pt-8 pb-3 sm:pb-4 flex items-center justify-between gap-3 shrink-0">
           <div>
@@ -35,7 +43,7 @@ export const TopicSelector: React.FC<TopicSelectorProps> = ({ onSelect, onClose 
               placeholder="Buscar topico..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full bg-slate-50 border-none rounded-2xl py-4 pl-11 pr-4 text-sm font-semibold focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all"
+              className="w-full bg-slate-50 border-none rounded-2xl py-4 pl-11 pr-4 text-base sm:text-sm font-semibold focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all"
             />
           </div>
         </div>

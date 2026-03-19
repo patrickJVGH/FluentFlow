@@ -8,6 +8,14 @@ interface AdminDashboardProps {
   onLogout: () => void;
 }
 
+const safeAreaPageStyle: React.CSSProperties = {
+  boxSizing: 'border-box',
+  paddingTop: 'env(safe-area-inset-top, 0px)',
+  paddingRight: 'env(safe-area-inset-right, 0px)',
+  paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+  paddingLeft: 'env(safe-area-inset-left, 0px)',
+};
+
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ users, onDeleteUser, onLogout }) => {
   const getDisplayedLevel = (score: number) => Math.max(1, Math.floor(Math.max(0, score) / 100) + 1);
 
@@ -37,7 +45,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ users, onDeleteU
   };
 
   return (
-    <div className="min-h-[100dvh] bg-gray-50 p-3 sm:p-6 font-sans overflow-y-auto">
+    <div className="min-h-[100dvh] bg-gray-50 p-3 sm:p-6 font-sans overflow-y-auto" style={safeAreaPageStyle}>
       <div className="max-w-4xl mx-auto">
         <header className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-5 sm:mb-8 bg-white px-4 sm:px-6 py-4 rounded-2xl shadow-sm border border-gray-100">
           <div className="flex items-center gap-3">

@@ -153,6 +153,14 @@ const buildEveDebugLine = (debug: EveDebugInfo): string => {
   return parts.join(' | ');
 };
 
+const safeAreaShellStyle: React.CSSProperties = {
+  boxSizing: 'border-box',
+  paddingTop: 'env(safe-area-inset-top, 0px)',
+  paddingRight: 'env(safe-area-inset-right, 0px)',
+  paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+  paddingLeft: 'env(safe-area-inset-left, 0px)',
+};
+
 const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onUpdateUser: (u: UserProfile) => void; existingUsers: UserProfile[] }> = ({ currentUser, onLogout, onUpdateUser, existingUsers }) => {
   const [status, setStatus] = useState<AppStatus>(AppStatus.IDLE);
   const [phrases, setPhrases] = useState<Phrase[]>([]);
@@ -544,6 +552,12 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appMode]);
 
+  useEffect(() => {
+    if (showHistory || showTopicSelector || showProfileSetup) {
+      setShowSettings(false);
+    }
+  }, [showHistory, showTopicSelector, showProfileSetup]);
+
   const handleAudioRecorded = async (base64: string, mimeType: string, _audioUrl: string, browserTranscript?: string) => {
     if (!base64 && !browserTranscript) return;
     await ensureAudioContext();
@@ -615,12 +629,27 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
     setShowSettings(false);
   };
 
+  const handleOpenProfileSetup = () => {
+    setShowSettings(false);
+    setShowProfileSetup(true);
+  };
+
+  const handleOpenHistory = () => {
+    setShowSettings(false);
+    setShowHistory(true);
+  };
+
+  const handleToggleSettings = () => {
+    if (showHistory || showTopicSelector || showProfileSetup) return;
+    setShowSettings(prev => !prev);
+  };
+
   return (
-    <div className="flex flex-col h-[100dvh] min-h-[100dvh] bg-[#F8FAFC] overflow-hidden font-sans">
+    <div className="flex flex-col h-[100dvh] min-h-[100dvh] bg-[#F8FAFC] overflow-hidden font-sans" style={safeAreaShellStyle}>
       <header className={`bg-white/95 backdrop-blur-md border-b border-slate-200 shadow-sm flex items-center justify-between z-30 shrink-0 ${layoutDensity === 'ultra-compact' ? 'px-3 py-1.5' : 'px-3 sm:px-6 py-2 sm:py-2.5'}`}>
         <div className="flex items-center gap-2 sm:gap-3">
           <button 
-            onClick={() => setShowProfileSetup(true)}
+            onClick={handleOpenProfileSetup}
             className={`w-9 h-9 sm:w-10 sm:h-10 rounded-xl ${currentUser.avatarColor} flex items-center justify-center text-white font-bold text-xs sm:text-sm shadow-inner active:scale-95 transition-all`}
           >
             {currentUser.name[0] || 'V'}
@@ -634,14 +663,14 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
         </div>
         <div className="flex items-center gap-1">
           {appMode && (
-            <button onClick={() => setAppMode(null)} className="p-2 text-slate-400 hover:text-indigo-600 transition-colors">
+            <button onClick={() => { setShowSettings(false); setAppMode(null); }} className="p-2 text-slate-400 hover:text-indigo-600 transition-colors">
               <Home className="w-4 h-4" />
             </button>
           )}
-          <button onClick={() => setShowHistory(true)} className="p-2 text-slate-400 hover:text-indigo-600 transition-colors">
+          <button onClick={handleOpenHistory} className="p-2 text-slate-400 hover:text-indigo-600 transition-colors">
             <BarChart className="w-4 h-4" />
           </button>
-          <button onClick={() => setShowSettings(!showSettings)} className="p-2 text-slate-400 hover:text-indigo-600 transition-colors">
+          <button onClick={handleToggleSettings} className="p-2 text-slate-400 hover:text-indigo-600 transition-colors">
             <Settings className="w-4 h-4" />
           </button>
         </div>
@@ -757,7 +786,7 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
         />
       )}
       {showSettings && (
-        <div className="absolute top-12 sm:top-14 right-3 sm:right-4 w-[min(14rem,calc(100vw-1.5rem))] sm:w-56 bg-white rounded-2xl shadow-2xl border p-2 z-50 animate-fade-in-up">
+        <div className="absolute top-12 sm:top-14 right-3 sm:right-4 w-[min(14rem,calc(100vw-1.5rem))] sm:w-56 bg-white rounded-2xl shadow-2xl border p-2 z-40 animate-fade-in-up">
           <button onClick={() => setIsAvatarEnabled(!isAvatarEnabled)} className="w-full text-left p-3 rounded-xl text-sm font-semibold flex items-center justify-between text-slate-600 hover:bg-slate-50">
              <div className="flex items-center gap-3">
                {isAvatarEnabled ? <Monitor className="w-4 h-4 text-indigo-500" /> : <MonitorOff className="w-4 h-4 text-slate-300" />}

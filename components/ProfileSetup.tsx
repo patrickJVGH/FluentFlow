@@ -10,6 +10,14 @@ interface ProfileSetupProps {
   existingNames?: string[];
 }
 
+const safeAreaOverlayStyle: React.CSSProperties = {
+  boxSizing: 'border-box',
+  paddingTop: 'calc(env(safe-area-inset-top, 0px) + 1rem)',
+  paddingRight: 'calc(env(safe-area-inset-right, 0px) + 1rem)',
+  paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 1rem)',
+  paddingLeft: 'calc(env(safe-area-inset-left, 0px) + 1rem)',
+};
+
 const AVATAR_COLORS = [
   'bg-indigo-500', 'bg-blue-500', 'bg-purple-500', 'bg-pink-500', 
   'bg-red-500', 'bg-orange-500', 'bg-green-500', 'bg-teal-500'
@@ -45,7 +53,7 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({ initialProfile, onSa
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/50 backdrop-blur-sm p-4 animate-fade-in-up font-sans">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/50 backdrop-blur-sm p-4 animate-fade-in-up font-sans" style={safeAreaOverlayStyle}>
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm overflow-hidden transform transition-all max-h-[90dvh] flex flex-col">
         
         {/* Simple Header */}
