@@ -44,6 +44,29 @@ Este projeto ja esta preparado para Vercel com frontend Vite + funcao serverless
 
 A chave da OpenAI fica apenas no backend (Vercel Function), nao no bundle do navegador.
 
+## Fluxo padrao Vercel
+
+O repositorio agora tem um fluxo local padronizado para push, deploy e leitura de logs.
+
+- `npm run ship`
+  Faz `git push` da branch atual e aguarda o deployment correspondente ao commit atual na Vercel. Salva metadados e build logs em `logs/vercel/`.
+- `npm run ship:runtime`
+  Igual ao comando acima, mas continua seguindo runtime logs depois que o deployment aparece.
+- `npm run vercel:watch`
+  Apenas aguarda o deployment do commit atual e salva os build logs em `logs/vercel/`.
+- `npm run vercel:watch:runtime`
+  Igual ao `vercel:watch`, mas segue os runtime logs do deployment encontrado.
+- `npm run vercel:logs:runtime`
+  Lê runtime logs recentes do projeto linkado e grava em `logs/vercel/runtime-live.log`.
+- `npm run vercel:deploy:prod`
+  Faz deploy direto pelo CLI da Vercel, sem depender do push no GitHub.
+
+Observacoes:
+
+- Os scripts usam o projeto local linkado em `.vercel/project.json`.
+- `logs/` e `.vercel/` ficam fora do Git.
+- O deploy automatico do app continua sendo o da integracao GitHub -> Vercel; `ship` so padroniza o acompanhamento daqui do VSCode.
+
 ## Diagnostico Rapido (EVE)
 
 1. Abra `GET /api/ai` no ambiente deployado.

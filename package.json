@@ -6,21 +6,29 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "ship": "powershell -ExecutionPolicy Bypass -File ./scripts/git-push-and-watch-vercel.ps1",
+    "ship:runtime": "powershell -ExecutionPolicy Bypass -File ./scripts/git-push-and-watch-vercel.ps1 -FollowRuntime",
+    "vercel:deploy": "powershell -ExecutionPolicy Bypass -File ./scripts/vercel-deploy.ps1",
+    "vercel:deploy:prod": "powershell -ExecutionPolicy Bypass -File ./scripts/vercel-deploy.ps1 -Production",
+    "vercel:logs:runtime": "powershell -ExecutionPolicy Bypass -File ./scripts/vercel-tail-runtime-logs.ps1",
+    "vercel:watch": "powershell -ExecutionPolicy Bypass -File ./scripts/vercel-watch-head-deployment.ps1",
+    "vercel:watch:runtime": "powershell -ExecutionPolicy Bypass -File ./scripts/vercel-watch-head-deployment.ps1 -FollowRuntime"
   },
   "dependencies": {
-    "react": "18.2.0",
-    "react-dom": "18.2.0",
+    "@react-three/drei": "9.99.0",
+    "@react-three/fiber": "8.15.14",
     "lucide-react": "0.263.1",
     "openai": "^4.104.0",
-    "three": "0.160.0",
-    "@react-three/fiber": "8.15.14",
-    "@react-three/drei": "9.99.0"
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "three": "0.160.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
     "typescript": "~5.8.2",
+    "vercel": "^50.33.1",
     "vite": "^6.2.0"
   }
 }
