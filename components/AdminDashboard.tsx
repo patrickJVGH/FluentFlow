@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { UserProfile, GameState } from '../types';
-import { Trash2, LogOut, Shield, Users } from 'lucide-react';
+import { Trash2, LogOut, Shield, Users, Activity, Bot, Mic, Sparkles, Type, Volume2 } from 'lucide-react';
+import { AiUsageAction, AiUsageBucket, AiUsageTelemetry, readAiUsageTelemetry } from '../services/aiUsageTelemetry';
 
 interface AdminDashboardProps {
   users: UserProfile[];
@@ -16,8 +17,45 @@ const safeAreaPageStyle: React.CSSProperties = {
   paddingLeft: 'env(safe-area-inset-left, 0px)',
 };
 
+const ESTIMATED_AUDIO_BYTES_PER_MINUTE = 240000;
+
+const ACTION_META: Record<AiUsageAction, { label: string; icon: React.ReactNode }> = {
+  conversation: { label: 'Conversa', icon: <Bot className="w-4 h-4 text-indigo-500" /> },
+  pronunciation: { label: 'Pronuncia', icon: <Mic className="w-4 h-4 text-emerald-500" /> },
+  speech: { label: 'TTS', icon: <Volume2 className="w-4 h-4 text-amber-500" /> },
+  generatePhrases: { label: 'Frases', icon: <Sparkles className="w-4 h-4 text-fuchsia-500" /> },
+  generateWords: { label: 'Palavras', icon: <Type className="w-4 h-4 text-rose-500" /> },
+};
+
+const formatBytes = (bytes: number): string => {
+  if (bytes <= 0) return '0 B';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+};
+
+const formatMinutes = (bytes: number): string => `${(bytes / ESTIMATED_AUDIO_BYTES_PER_MINUTE).toFixed(2)} min`;
+
+const formatDateTime = (value: number | null): string => {
+  if (!value) return '--';
+  const date = new Date(value);
+  return `${date.toLocaleDateString()} ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+};
+
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ users, onDeleteUser, onLogout }) => {
+  const [aiUsage, setAiUsage] = useState<AiUsageTelemetry>(() => readAiUsageTelemetry());
   const getDisplayedLevel = (score: number) => Math.max(1, Math.floor(Math.max(0, score) / 100) + 1);
+
+  useEffect(() => {
+    const refresh = () => setAiUsage(readAiUsageTelemetry());
+    refresh();
+    window.addEventListener('focus', refresh);
+    window.addEventListener('storage', refresh);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      window.removeEventListener('storage', refresh);
+    };
+  }, []);
 
   const getUserStats = (userId: string): GameState | null => {
     try {
@@ -43,6 +81,38 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ users, onDeleteU
       onDeleteUser(user.id);
     }
   };
+
+  const usageBuckets = useMemo(
+    () => (Object.keys(ACTION_META) as AiUsageAction[]).map(action => aiUsage.buckets[action]),
+    [aiUsage]
+  );
+
+  const usageTotals = useMemo(
+    () =>
+      usageBuckets.reduce(
+        (acc, bucket) => ({
+          calls: acc.calls + bucket.calls,
+          successfulCalls: acc.successfulCalls + bucket.successfulCalls,
+          failedCalls: acc.failedCalls + bucket.failedCalls,
+          uploadedAudioBytes: acc.uploadedAudioBytes + bucket.uploadedAudioBytes,
+          returnedAudioBytes: acc.returnedAudioBytes + bucket.returnedAudioBytes,
+          requestTextChars: acc.requestTextChars + bucket.requestTextChars,
+          responseTextChars: acc.responseTextChars + bucket.responseTextChars,
+          itemsReturned: acc.itemsReturned + bucket.itemsReturned,
+        }),
+        {
+          calls: 0,
+          successfulCalls: 0,
+          failedCalls: 0,
+          uploadedAudioBytes: 0,
+          returnedAudioBytes: 0,
+          requestTextChars: 0,
+          responseTextChars: 0,
+          itemsReturned: 0,
+        }
+      ),
+    [usageBuckets]
+  );
 
   return (
     <div className="min-h-[100dvh] bg-gray-50 p-3 sm:p-6 font-sans overflow-y-auto" style={safeAreaPageStyle}>
@@ -174,6 +244,89 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ users, onDeleteU
             </>
           )}
         </div>
+
+        <section className="mt-5 sm:mt-8 bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="px-4 sm:px-6 py-4 sm:py-5 border-b border-gray-50 flex items-center gap-3">
+            <Activity className="w-4 h-4 text-gray-400" />
+            <div>
+              <h2 className="font-bold text-gray-800 text-xs sm:text-sm uppercase tracking-wide">Debug IA Local</h2>
+              <p className="text-[10px] text-gray-400 font-medium">Estimativa do navegador atual, nao faturamento oficial</p>
+            </div>
+          </div>
+
+          <div className="p-4 sm:p-6">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-5">
+              <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Chamadas</p>
+                <p className="mt-2 text-2xl font-black text-slate-800">{usageTotals.calls}</p>
+                <p className="text-[11px] text-slate-500">{usageTotals.successfulCalls} ok / {usageTotals.failedCalls} falhas</p>
+              </div>
+              <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Audio enviado</p>
+                <p className="mt-2 text-lg font-black text-slate-800">{formatMinutes(usageTotals.uploadedAudioBytes)}</p>
+                <p className="text-[11px] text-slate-500">{formatBytes(usageTotals.uploadedAudioBytes)}</p>
+              </div>
+              <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Audio retornado</p>
+                <p className="mt-2 text-lg font-black text-slate-800">{formatBytes(usageTotals.returnedAudioBytes)}</p>
+                <p className="text-[11px] text-slate-500">TTS server-side</p>
+              </div>
+              <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Texto processado</p>
+                <p className="mt-2 text-lg font-black text-slate-800">{usageTotals.requestTextChars + usageTotals.responseTextChars}</p>
+                <p className="text-[11px] text-slate-500">{usageTotals.itemsReturned} itens gerados</p>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              {usageBuckets.map((bucket: AiUsageBucket) => {
+                const meta = ACTION_META[bucket.action];
+                return (
+                  <div key={bucket.action} className="rounded-2xl border border-gray-100 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-9 h-9 rounded-xl bg-slate-50 flex items-center justify-center shrink-0">
+                          {meta.icon}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="font-bold text-sm text-gray-900">{meta.label}</p>
+                          <p className="text-[10px] text-gray-400">Atualizado: {formatDateTime(bucket.lastAt)}</p>
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="text-sm font-black text-slate-800">{bucket.calls}</p>
+                        <p className="text-[10px] text-slate-400 uppercase tracking-wide">chamadas</p>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                      <div>
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Sucesso</p>
+                        <p className="mt-1 font-bold text-emerald-600">{bucket.successfulCalls}</p>
+                        <p className="text-[10px] text-slate-400">{bucket.failedCalls} falhas</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Entrada</p>
+                        <p className="mt-1 font-bold text-slate-700">{bucket.requestTextChars} chars</p>
+                        <p className="text-[10px] text-slate-400">{formatMinutes(bucket.uploadedAudioBytes)} audio</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Saida</p>
+                        <p className="mt-1 font-bold text-slate-700">{bucket.responseTextChars} chars</p>
+                        <p className="text-[10px] text-slate-400">{formatBytes(bucket.returnedAudioBytes)} audio</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Debug</p>
+                        <p className="mt-1 font-bold text-slate-700">{bucket.itemsReturned} itens</p>
+                        <p className="text-[10px] text-slate-400">{bucket.warnings} warn / {bucket.errors} err</p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </section>
       </div>
     </div>
   );

@@ -1,4 +1,5 @@
 import { ChatMessage, Phrase, PronunciationResult } from '../types';
+import { estimateBase64Bytes, recordAiUsage } from './aiUsageTelemetry';
 
 export interface EveDebugInfo {
   requestId: string;
@@ -104,6 +105,9 @@ const defaultDebug = (requestId: string): EveDebugInfo => ({
   errors: [],
 });
 
+const totalTextLength = (values: Array<string | undefined | null>): number =>
+  values.reduce((sum, value) => sum + String(value || '').trim().length, 0);
+
 const normalizePhraseList = (items: unknown, fallbackCategory: string): Phrase[] => {
   if (!Array.isArray(items)) return [];
 
@@ -131,6 +135,8 @@ export const converseWithEve = async (
   history: ChatMessage[]
 ): Promise<EveConversationResponse> => {
   const requestId = createClientRequestId();
+  const uploadedAudioBytes = estimateBase64Bytes(audioBase64);
+  const historyTextChars = history.reduce((sum, item) => sum + String(item?.text || '').trim().length, 0);
 
   try {
     const raw = await postAiAction<any>('eveConversation', {
@@ -141,19 +147,48 @@ export const converseWithEve = async (
     });
 
     const debug = ensureDebugShape(requestId, raw?.debug);
+    const transcription = typeof raw?.transcription === 'string' ? raw.transcription : '';
+    const response = typeof raw?.response === 'string' ? raw.response : "I couldn't hear you clearly. Please try again.";
+    const translation = typeof raw?.translation === 'string' ? raw.translation : 'Nao consegui te ouvir com clareza. Tente novamente.';
+    const isSilent = Boolean(raw?.isSilent);
+
+    recordAiUsage('conversation', {
+      calls: 1,
+      successfulCalls: isSilent ? 0 : 1,
+      failedCalls: isSilent ? 1 : 0,
+      uploadedAudioBytes,
+      requestTextChars: historyTextChars,
+      responseTextChars: totalTextLength([
+        transcription,
+        response,
+        translation,
+        typeof raw?.feedback === 'string' ? raw.feedback : '',
+        typeof raw?.improvement === 'string' ? raw.improvement : '',
+      ]),
+      warnings: debug.warnings.length,
+      errors: debug.errors.length,
+    });
 
     return {
       requestId: typeof raw?.requestId === 'string' ? raw.requestId : requestId,
-      isSilent: Boolean(raw?.isSilent),
-      transcription: typeof raw?.transcription === 'string' ? raw.transcription : '',
-      response: typeof raw?.response === 'string' ? raw.response : "I couldn't hear you clearly. Please try again.",
-      translation: typeof raw?.translation === 'string' ? raw.translation : 'Nao consegui te ouvir com clareza. Tente novamente.',
+      isSilent,
+      transcription,
+      response,
+      translation,
       feedback: typeof raw?.feedback === 'string' ? raw.feedback : undefined,
       improvement: typeof raw?.improvement === 'string' ? raw.improvement : undefined,
       debug,
       error: typeof raw?.error === 'string' ? raw.error : undefined,
     };
   } catch (error: any) {
+    recordAiUsage('conversation', {
+      calls: 1,
+      failedCalls: 1,
+      uploadedAudioBytes,
+      requestTextChars: historyTextChars,
+      errors: 1,
+    });
+
     return {
       requestId,
       isSilent: false,
@@ -171,6 +206,7 @@ export const converseWithEve = async (
 
 export const requestEveSpeech = async (text: string): Promise<EveSpeechResponse> => {
   const requestId = createClientRequestId();
+  const requestTextChars = text.trim().length;
 
   try {
     const raw = await postAiAction<any>('eveSpeech', {
@@ -178,14 +214,34 @@ export const requestEveSpeech = async (text: string): Promise<EveSpeechResponse>
       text,
     });
 
+    const base64 = typeof raw?.base64 === 'string' ? raw.base64 : null;
+    const debug = ensureDebugShape(requestId, raw?.debug);
+
+    recordAiUsage('speech', {
+      calls: 1,
+      successfulCalls: base64 ? 1 : 0,
+      failedCalls: base64 ? 0 : 1,
+      requestTextChars,
+      returnedAudioBytes: estimateBase64Bytes(base64 || ''),
+      warnings: debug.warnings.length,
+      errors: debug.errors.length,
+    });
+
     return {
       requestId: typeof raw?.requestId === 'string' ? raw.requestId : requestId,
-      base64: typeof raw?.base64 === 'string' ? raw.base64 : null,
+      base64,
       mimeType: typeof raw?.mimeType === 'string' ? raw.mimeType : null,
-      debug: ensureDebugShape(requestId, raw?.debug),
+      debug,
       error: typeof raw?.error === 'string' ? raw.error : undefined,
     };
   } catch (error: any) {
+    recordAiUsage('speech', {
+      calls: 1,
+      failedCalls: 1,
+      requestTextChars,
+      errors: 1,
+    });
+
     return {
       requestId,
       base64: null,
@@ -205,6 +261,8 @@ export const evaluatePronunciation = async (
   targetPhrase: string
 ): Promise<EvePronunciationResponse> => {
   const requestId = createClientRequestId();
+  const uploadedAudioBytes = estimateBase64Bytes(audioBase64);
+  const requestTextChars = targetPhrase.trim().length;
 
   try {
     const raw = await postAiAction<any>('pronunciation', {
@@ -215,21 +273,43 @@ export const evaluatePronunciation = async (
     });
 
     const debug = ensureDebugShape(requestId, raw?.debug);
+    const transcript = typeof raw?.transcript === 'string' ? raw.transcript : '';
+    const feedback =
+      typeof raw?.feedback === 'string' && raw.feedback.trim()
+        ? raw.feedback
+        : 'Nao foi possivel avaliar a pronunciacao agora.';
+    const usable = transcript.trim().length > 0;
+
+    recordAiUsage('pronunciation', {
+      calls: 1,
+      successfulCalls: usable ? 1 : 0,
+      failedCalls: usable ? 0 : 1,
+      uploadedAudioBytes,
+      requestTextChars,
+      responseTextChars: totalTextLength([transcript, feedback]),
+      warnings: debug.warnings.length,
+      errors: debug.errors.length,
+    });
 
     return {
       requestId: typeof raw?.requestId === 'string' ? raw.requestId : requestId,
-      transcript: typeof raw?.transcript === 'string' ? raw.transcript : '',
+      transcript,
       isCorrect: Boolean(raw?.isCorrect),
       score: typeof raw?.score === 'number' ? Math.max(0, Math.min(100, raw.score)) : 0,
-      feedback:
-        typeof raw?.feedback === 'string' && raw.feedback.trim()
-          ? raw.feedback
-          : 'Nao foi possivel avaliar a pronunciacao agora.',
+      feedback,
       words: Array.isArray(raw?.words) ? raw.words : [],
       debug,
       error: typeof raw?.error === 'string' ? raw.error : undefined,
     };
   } catch (error: any) {
+    recordAiUsage('pronunciation', {
+      calls: 1,
+      failedCalls: 1,
+      uploadedAudioBytes,
+      requestTextChars,
+      errors: 1,
+    });
+
     return {
       requestId,
       transcript: '',
@@ -252,17 +332,38 @@ export const requestPracticePhrases = async (
   count: number = 5
 ): Promise<Phrase[]> => {
   const requestId = createClientRequestId();
-  const raw = await postAiAction<any>('generatePhrases', {
-    requestId,
-    topic,
-    difficulty,
-    count,
-  });
-  const phrases = normalizePhraseList(raw, topic);
-  if (!phrases.length) {
-    throw new Error('No phrases returned from generatePhrases');
+  const requestTextChars = totalTextLength([topic, difficulty, String(count)]);
+
+  try {
+    const raw = await postAiAction<any>('generatePhrases', {
+      requestId,
+      topic,
+      difficulty,
+      count,
+    });
+    const phrases = normalizePhraseList(raw, topic);
+    if (!phrases.length) {
+      throw new Error('No phrases returned from generatePhrases');
+    }
+
+    recordAiUsage('generatePhrases', {
+      calls: 1,
+      successfulCalls: 1,
+      requestTextChars,
+      responseTextChars: phrases.reduce((sum, phrase) => sum + phrase.english.length + phrase.portuguese.length, 0),
+      itemsReturned: phrases.length,
+    });
+
+    return phrases;
+  } catch (error) {
+    recordAiUsage('generatePhrases', {
+      calls: 1,
+      failedCalls: 1,
+      requestTextChars,
+      errors: 1,
+    });
+    throw error;
   }
-  return phrases;
 };
 
 export const requestVocabularyWords = async (
@@ -270,14 +371,35 @@ export const requestVocabularyWords = async (
   count: number = 10
 ): Promise<Phrase[]> => {
   const requestId = createClientRequestId();
-  const raw = await postAiAction<any>('generateWords', {
-    requestId,
-    category,
-    count,
-  });
-  const phrases = normalizePhraseList(raw, category);
-  if (!phrases.length) {
-    throw new Error('No words returned from generateWords');
+  const requestTextChars = totalTextLength([category, String(count)]);
+
+  try {
+    const raw = await postAiAction<any>('generateWords', {
+      requestId,
+      category,
+      count,
+    });
+    const phrases = normalizePhraseList(raw, category);
+    if (!phrases.length) {
+      throw new Error('No words returned from generateWords');
+    }
+
+    recordAiUsage('generateWords', {
+      calls: 1,
+      successfulCalls: 1,
+      requestTextChars,
+      responseTextChars: phrases.reduce((sum, phrase) => sum + phrase.english.length + phrase.portuguese.length, 0),
+      itemsReturned: phrases.length,
+    });
+
+    return phrases;
+  } catch (error) {
+    recordAiUsage('generateWords', {
+      calls: 1,
+      failedCalls: 1,
+      requestTextChars,
+      errors: 1,
+    });
+    throw error;
   }
-  return phrases;
 };
