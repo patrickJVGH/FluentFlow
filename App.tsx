@@ -20,10 +20,12 @@ import { ProgressHistory } from './components/ProgressHistory';
 import { ModeSelector } from './components/ModeSelector';
 import { AdminDashboard } from './components/AdminDashboard';
 import { TopicSelector } from './components/TopicSelector';
-import { BarChart, Loader2, Settings, AlertCircle, CheckCircle2, Home, Radio, Monitor, MonitorOff, ToggleLeft, ToggleRight } from 'lucide-react';
+import { BarChart, Loader2, Settings, AlertCircle, CheckCircle2, Home, Radio, Monitor, MonitorOff, ToggleLeft, ToggleRight, Volume2 } from 'lucide-react';
 
 const USERS_KEY = 'fluentflow_users';
 const LEVEL_XP_STEP = 100;
+const AUTO_VOICE_KEY_PREFIX = 'ff_auto_voice_pref_';
+const DUPLICATE_GUARD_WINDOW_MS = 6000;
 
 const createDefaultGameState = (): GameState => ({
   score: 0,
@@ -188,6 +190,14 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
       return true;
     }
   });
+  const [isAutoVoiceEnabled, setIsAutoVoiceEnabled] = useState(() => {
+    try {
+      const saved = localStorage.getItem(`${AUTO_VOICE_KEY_PREFIX}${currentUser.id}`);
+      return saved !== null ? JSON.parse(saved) : false;
+    } catch {
+      return false;
+    }
+  });
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioAnalyserRef = useRef<AnalyserNode | null>(null);
@@ -195,6 +205,10 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
   const speechRequestIdRef = useRef<number>(0);
   const speechSafetyTimerRef = useRef<number | null>(null);
+  const lastSpeechKeyRef = useRef('');
+  const lastSpeechAtRef = useRef(0);
+  const lastAudioSignatureRef = useRef('');
+  const lastAudioAtRef = useRef(0);
   const [analyserForAvatar, setAnalyserForAvatar] = useState<AnalyserNode | null>(null);
   const [eveDebugLine, setEveDebugLine] = useState('');
   const [recorderDebugLine, setRecorderDebugLine] = useState('');
@@ -240,6 +254,10 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
   useEffect(() => {
     localStorage.setItem(`ff_avatar_pref_${currentUser.id}`, JSON.stringify(isAvatarEnabled));
   }, [isAvatarEnabled, currentUser.id]);
+
+  useEffect(() => {
+    localStorage.setItem(`${AUTO_VOICE_KEY_PREFIX}${currentUser.id}`, JSON.stringify(isAutoVoiceEnabled));
+  }, [isAutoVoiceEnabled, currentUser.id]);
 
   useEffect(() => {
     try {
@@ -408,6 +426,19 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
   const speakText = useCallback(async (text: string) => {
     if (!text) return;
 
+    const speechKey = text.trim().toLowerCase().replace(/\s+/g, ' ');
+    const now = Date.now();
+    if (
+      speechKey &&
+      speechKey === lastSpeechKeyRef.current &&
+      now - lastSpeechAtRef.current < DUPLICATE_GUARD_WINDOW_MS
+    ) {
+      setEveDebugLine(`EVE speech dedupe | skipped repeated text within ${Math.round(DUPLICATE_GUARD_WINDOW_MS / 1000)}s`);
+      return;
+    }
+
+    lastSpeechKeyRef.current = speechKey;
+    lastSpeechAtRef.current = now;
     stopAllSpeech();
     const currentId = speechRequestIdRef.current;
 
@@ -451,7 +482,9 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
         setChatHistory([]); 
         const welcome = `Hello ${currentUser.name}! I'm EVE. How are you today?`;
         setChatHistory([{ role: 'model', text: welcome, translation: `Olá ${currentUser.name}! Eu sou a EVE. Como você está hoje?` }]);
-        speakText(welcome);
+        if (isAutoVoiceEnabled) {
+          speakText(welcome);
+        }
       }
       if (mode !== 'conversation' && loadedPhrases.length === 0) {
         throw new Error(`No content returned for ${mode}`);
@@ -467,7 +500,7 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
       setResult(null);
       setStatus(AppStatus.READY);
     }
-  }, [gameState.courseProgressIndex, currentUser.name, selectedTopic, speakText, stopAllSpeech]);
+  }, [gameState.courseProgressIndex, currentUser.name, isAutoVoiceEnabled, selectedTopic, speakText, stopAllSpeech]);
 
   useEffect(() => {
     if (appMode) loadData(appMode);
@@ -484,6 +517,19 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
 
   const handleAudioRecorded = async (base64: string, mimeType: string, _audioUrl: string) => {
     if (!base64) return;
+
+    const audioSignature = `${appMode || 'none'}|${mimeType}|${base64.length}|${base64.slice(0, 24)}|${base64.slice(-24)}`;
+    const now = Date.now();
+    if (
+      audioSignature === lastAudioSignatureRef.current &&
+      now - lastAudioAtRef.current < DUPLICATE_GUARD_WINDOW_MS
+    ) {
+      setRecorderDebugLine(`[Recorder dedupe] Ignored duplicate audio payload within ${Math.round(DUPLICATE_GUARD_WINDOW_MS / 1000)}s`);
+      return;
+    }
+    lastAudioSignatureRef.current = audioSignature;
+    lastAudioAtRef.current = now;
+
     await ensureAudioContext();
     setStatus(AppStatus.PROCESSING_AUDIO);
     
@@ -510,7 +556,9 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
           { role: 'model', text: response.response, translation: response.translation, feedback: response.feedback, improvement: response.improvement }
         ]);
         registerProgressActivity({ scoreDelta: 10 });
-        speakText(response.response);
+        if (isAutoVoiceEnabled) {
+          speakText(response.response);
+        }
         setStatus(AppStatus.READY);
       } else {
         const currentPhrase = phrases[currentPhraseIndex];
@@ -624,8 +672,20 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
                 <div className={`flex-1 ${conversationMinHeightClass} overflow-y-auto space-y-3 custom-scrollbar pr-1`}>
                   {chatHistory.map((msg, i) => (
                     <div key={i} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'} animate-fade-in-up`}>
-                      <div className={`px-4 py-2.5 rounded-2xl max-w-[90%] text-sm shadow-sm ${msg.role === 'user' ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-white text-slate-700 rounded-tl-none border border-slate-100'}`}>
-                        {msg.text}
+                      <div className={`flex items-start gap-2 max-w-[90%] ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                        <div className={`px-4 py-2.5 rounded-2xl text-sm shadow-sm ${msg.role === 'user' ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-white text-slate-700 rounded-tl-none border border-slate-100'}`}>
+                          {msg.text}
+                        </div>
+                        {msg.role === 'model' && (
+                          <button
+                            type="button"
+                            onClick={() => speakText(msg.text)}
+                            className="mt-1 p-2 rounded-full border border-slate-200 bg-white text-slate-400 hover:text-indigo-600 hover:border-indigo-200 transition-colors"
+                            aria-label="Ouvir resposta da EVE"
+                          >
+                            <Volume2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                       {msg.role === 'model' && msg.translation && (
                         <p className="mt-1 px-1 text-[10px] text-slate-400 italic">"{msg.translation}"</p>
@@ -718,6 +778,13 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
              </div>
              {isAvatarEnabled ? <ToggleRight className="w-5 h-5 text-indigo-600" /> : <ToggleLeft className="w-5 h-5 text-slate-300" />}
           </button>
+          <button onClick={() => setIsAutoVoiceEnabled(!isAutoVoiceEnabled)} className="w-full text-left p-3 rounded-xl text-sm font-semibold flex items-center justify-between text-slate-600 hover:bg-slate-50">
+             <div className="flex items-center gap-3">
+               <Volume2 className={`w-4 h-4 ${isAutoVoiceEnabled ? 'text-indigo-500' : 'text-slate-300'}`} />
+               <span>Auto voz EVE</span>
+             </div>
+             {isAutoVoiceEnabled ? <ToggleRight className="w-5 h-5 text-indigo-600" /> : <ToggleLeft className="w-5 h-5 text-slate-300" />}
+          </button>
           <button onClick={onLogout} className="w-full text-left p-3 rounded-xl text-sm font-bold text-rose-500 mt-1 border-t pt-3">Sair da Conta</button>
         </div>
       )}
@@ -781,3 +848,4 @@ const App: React.FC = () => {
 };
 
 export default App;
+

@@ -147,7 +147,7 @@ const ttsVoice = normalizeText(process.env.OPENAI_TTS_VOICE) || 'alloy';
 const disableServerTranscription = envFlag(process.env.DISABLE_SERVER_TRANSCRIPTION);
 const disableServerTts = envFlag(process.env.DISABLE_SERVER_TTS);
 const buildId = normalizeText(process.env.VERCEL_GIT_COMMIT_SHA).slice(0, 12) || 'local';
-const apiVersion = 'eve-api-2026-03-19-0150';
+const apiVersion = 'eve-api-2026-03-19-0200';
 const modelAccessBackoffMs = Math.max(0, Number(process.env.OPENAI_MODEL_ACCESS_BACKOFF_MS || 15000));
 const createModelAccessBackoff = (): ModelAccessBackoff => ({ until: 0, reason: '' });
 const readModelAccessBackoff = (state: ModelAccessBackoff, label: string): string | null => {
@@ -577,7 +577,7 @@ const buildLocalPronunciationFallback = (targetPhrase: string, transcript: strin
 const handleEveConversation = async (openai: OpenAI | null, payload: AnyObject = {}) => {
   const requestId = normalizeText(payload.requestId) || buildRequestId('eve');
   const debug = createDebug(requestId);
-  const history = normalizeHistory(payload.history).slice(-8);
+  const history = normalizeHistory(payload.history).slice(-4);
 
   logEve(requestId, 'conversation:start', {
     hasAudio: Boolean(normalizeText(payload.audioBase64)),
@@ -615,11 +615,14 @@ const handleEveConversation = async (openai: OpenAI | null, payload: AnyObject =
 
   const fallback = buildLocalTutorFallback(transcription);
 
-  const result = await chatJsonWithFallback(
+  const result = await chatJsonWithFallback<{ response?: string; responsePortuguese?: string }>(
     openai,
-    'You are EVE, an English tutor for Brazilian Portuguese speakers. Reply in English. Return only JSON with keys: response, responsePortuguese, feedback, improvement.',
-    `Recent conversation:\n${historyText || '(empty)'}\n\nUser said:\n"${transcription}"\n\nRespond naturally, concise, and educational.`,
-    fallback,
+    'You are EVE, an English tutor for Brazilian Portuguese speakers. Reply in English, keep it natural and brief, and do not correct grammar unless the user explicitly asks or the mistake blocks understanding. Return only JSON with keys: response, responsePortuguese.',
+    `Recent conversation:\n${historyText || '(empty)'}\n\nUser said:\n"${transcription}"\n\nReply with one short sentence in English, preferably under 14 words. Add at most one short follow-up question. Return a brief Portuguese translation.`,
+    {
+      response: fallback.response,
+      responsePortuguese: fallback.responsePortuguese,
+    },
     debug
   );
 
@@ -646,8 +649,8 @@ const handleEveConversation = async (openai: OpenAI | null, payload: AnyObject =
     transcription,
     response: normalizeText(result.response) || fallback.response,
     translation: normalizeText(result.responsePortuguese) || fallback.responsePortuguese,
-    feedback: normalizeText(result.feedback) || fallback.feedback,
-    improvement: normalizeText(result.improvement),
+    feedback: undefined,
+    improvement: undefined,
     debug,
     error: undefined,
   };
