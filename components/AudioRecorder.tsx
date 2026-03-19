@@ -2,7 +2,7 @@ import React, { forwardRef, useImperativeHandle, useRef, useState } from 'react'
 import { Loader2, Mic, Square } from 'lucide-react';
 
 interface AudioRecorderProps {
-  onAudioRecorded: (base64: string, mimeType: string, audioUrl: string, transcription?: string) => void;
+  onAudioRecorded: (base64: string, mimeType: string, audioUrl: string) => void;
   isProcessing: boolean;
   disabled: boolean;
   density?: 'normal' | 'compact' | 'ultra-compact';
@@ -37,18 +37,7 @@ const pickSupportedMimeType = (): string => {
   return '';
 };
 
-const getSpeechRecognitionCtor = () =>
-  (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-
 const makeRunId = () => `rec_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-
-const pickRecognitionLanguage = (): string => {
-  const candidates = [...(navigator.languages || []), navigator.language, 'en-US']
-    .filter(Boolean)
-    .map(value => String(value));
-
-  return candidates.find(value => /^en[-_]/i.test(value)) || candidates[0] || 'en-US';
-};
 
 export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
   ({ onAudioRecorded, isProcessing, disabled, density = 'normal', onRecordingStateChange, onRecorderLog }, ref) => {
@@ -56,11 +45,8 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
 
     const recorderRef = useRef<MediaRecorder | null>(null);
     const streamRef = useRef<MediaStream | null>(null);
-    const recognitionRef = useRef<any>(null);
 
     const chunksRef = useRef<Blob[]>([]);
-    const interimTranscriptRef = useRef('');
-    const finalTranscriptRef = useRef('');
     const startedAtRef = useRef(0);
     const stoppingRef = useRef(false);
     const runIdRef = useRef('');
@@ -83,16 +69,6 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
       onRecordingStateChange?.(recording);
     };
 
-    const stopRecognition = () => {
-      if (!recognitionRef.current) return;
-      try {
-        recognitionRef.current.stop();
-      } catch {
-        // noop
-      }
-      recognitionRef.current = null;
-    };
-
     const stopStream = () => {
       if (!streamRef.current) return;
       streamRef.current.getTracks().forEach(track => track.stop());
@@ -102,67 +78,9 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
     const resetState = () => {
       recorderRef.current = null;
       chunksRef.current = [];
-      interimTranscriptRef.current = '';
-      finalTranscriptRef.current = '';
       startedAtRef.current = 0;
       stoppingRef.current = false;
       notifyRecordingState(false);
-    };
-
-    const startSpeechRecognition = () => {
-      const SpeechRecognitionCtor = getSpeechRecognitionCtor();
-      if (!SpeechRecognitionCtor) {
-        emitLog('SpeechRecognition unavailable on this browser');
-        return;
-      }
-
-      try {
-        const recognition = new SpeechRecognitionCtor();
-        recognition.lang = pickRecognitionLanguage();
-        recognition.continuous = true;
-        recognition.interimResults = true;
-        recognition.maxAlternatives = 1;
-
-        recognition.onresult = (event: any) => {
-          let finalTranscript = finalTranscriptRef.current;
-          let interimTranscript = '';
-
-          for (let i = event.resultIndex || 0; i < (event.results?.length || 0); i += 1) {
-            const result = event.results[i];
-            const text = result?.[0]?.transcript?.trim();
-            if (!text) continue;
-
-            if (result.isFinal) finalTranscript = `${finalTranscript} ${text}`.trim();
-            else interimTranscript = `${interimTranscript} ${text}`.trim();
-          }
-
-          finalTranscriptRef.current = finalTranscript;
-          interimTranscriptRef.current = interimTranscript;
-        };
-
-        recognition.onerror = (event: any) => {
-          emitLog('SpeechRecognition error', { error: event?.error || 'unknown' });
-        };
-
-        recognition.onend = () => {
-          recognitionRef.current = null;
-          const shouldRestart = !stoppingRef.current && recorderRef.current?.state === 'recording';
-          if (shouldRestart) {
-            emitLog('SpeechRecognition ended; restarting');
-            window.setTimeout(() => {
-              if (!recognitionRef.current && !stoppingRef.current && recorderRef.current?.state === 'recording') {
-                startSpeechRecognition();
-              }
-            }, 150);
-          }
-        };
-
-        recognition.start();
-        recognitionRef.current = recognition;
-        emitLog('SpeechRecognition started', { lang: recognition.lang });
-      } catch (error) {
-        emitLog('SpeechRecognition start failed', { error: String(error) });
-      }
     };
 
     const startRecording = async () => {
@@ -190,8 +108,6 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
 
         streamRef.current = stream;
         chunksRef.current = [];
-        interimTranscriptRef.current = '';
-        finalTranscriptRef.current = '';
         startedAtRef.current = Date.now();
         stoppingRef.current = false;
 
@@ -213,32 +129,23 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
         };
 
         recorder.onstop = () => {
-          stopRecognition();
-
-          const transcript = `${finalTranscriptRef.current} ${interimTranscriptRef.current}`.trim();
           const durationMs = Date.now() - startedAtRef.current;
           const resolvedMimeType = recorder.mimeType || mimeType || 'audio/webm';
 
           emitLog('Recorder stopped', {
             durationMs,
             chunkCount: chunksRef.current.length,
-            transcriptLength: transcript.length,
             mimeType: resolvedMimeType,
           });
 
           try {
-            if (durationMs < MIN_DURATION_MS && !transcript) {
-              emitLog('Ignored short recording with empty transcript');
+            if (durationMs < MIN_DURATION_MS) {
+              emitLog('Ignored short recording');
               return;
             }
 
             const blob = new Blob(chunksRef.current, { type: resolvedMimeType });
             if (blob.size < MIN_BLOB_SIZE_BYTES) {
-              if (transcript) {
-                emitLog('Blob too small, falling back to transcript');
-                onAudioRecorded('', '', '', transcript);
-                return;
-              }
               emitLog('Ignored empty recording');
               return;
             }
@@ -250,12 +157,11 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
               const encoded = typeof reader.result === 'string' ? reader.result : '';
               const base64 = encoded.split(',')[1] || '';
               emitLog('Audio ready for upload', { bytes: blob.size });
-              onAudioRecorded(base64, resolvedMimeType, audioUrl, transcript || undefined);
+              onAudioRecorded(base64, resolvedMimeType, audioUrl);
             };
 
             reader.onerror = () => {
               emitLog('FileReader failed');
-              if (transcript) onAudioRecorded('', '', '', transcript);
             };
 
             reader.readAsDataURL(blob);
@@ -265,14 +171,12 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
           }
         };
 
-        startSpeechRecognition();
         recorder.start(250);
         notifyRecordingState(true);
         emitLog('Recording started', { mimeType: recorder.mimeType || mimeType || 'audio/webm' });
       } catch (error) {
         emitLog('Failed to start recording', { error: String(error) });
         alert('Precisamos de acesso ao microfone para praticar a fala.');
-        stopRecognition();
         stopStream();
         resetState();
       }
@@ -297,7 +201,6 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
         emitLog('Failed to stop recording cleanly', { error: String(error) });
       }
 
-      stopRecognition();
       stopStream();
       resetState();
     };
@@ -315,7 +218,6 @@ export const AudioRecorder = forwardRef<AudioRecorderRef, AudioRecorderProps>(
 
     React.useEffect(() => {
       return () => {
-        stopRecognition();
         stopStream();
       };
     }, []);

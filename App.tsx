@@ -140,7 +140,7 @@ const buildEveDebugLine = (debug: EveDebugInfo): string => {
     `EVE ${debug.requestId}`,
     `STT:${debug.transcriptSource}/${debug.transcriptionModel || '-'}`,
     `CHAT:${debug.chatModel || '-'}`,
-    `TTS:${debug.ttsModel || 'browser'}`,
+    `TTS:${debug.ttsModel || '-'}`,
     `W:${debug.warnings.length}`,
     `E:${debug.errors.length}`,
   ];
@@ -193,7 +193,6 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
   const audioAnalyserRef = useRef<AnalyserNode | null>(null);
   const mediaSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
-  const speechSynthesisUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const speechRequestIdRef = useRef<number>(0);
   const speechSafetyTimerRef = useRef<number | null>(null);
   const [analyserForAvatar, setAnalyserForAvatar] = useState<AnalyserNode | null>(null);
@@ -302,9 +301,6 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
     };
     initAudio();
     return () => { 
-      if ('speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-      }
       if (audioContextRef.current) {
         try {
           audioContextRef.current.close();
@@ -342,78 +338,8 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
       } catch (e) {}
       mediaSourceRef.current = null;
     }
-
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-    }
-
-    speechSynthesisUtteranceRef.current = null;
     setIsAvatarSpeaking(false);
   }, []);
-
-  const speakWithBrowserTts = (text: string, currentId: number): Promise<boolean> => {
-    if (!('speechSynthesis' in window)) return Promise.resolve(false);
-
-    return new Promise(resolve => {
-      try {
-        const synth = window.speechSynthesis;
-        const utterance = new SpeechSynthesisUtterance(text);
-        utterance.lang = 'en-US';
-        utterance.rate = 1;
-        utterance.pitch = 1;
-        utterance.volume = 1;
-
-        const voices = synth.getVoices();
-        const englishVoice =
-          voices.find(v => /^en[-_]/i.test(v.lang || '')) ||
-          voices.find(v => (v.lang || '').toLowerCase().startsWith('en'));
-        if (englishVoice) utterance.voice = englishVoice;
-
-        let settled = false;
-        const finish = (ok: boolean) => {
-          if (settled) return;
-          settled = true;
-          resolve(ok);
-        };
-
-        utterance.onend = () => {
-          if (speechSafetyTimerRef.current !== null) {
-            window.clearTimeout(speechSafetyTimerRef.current);
-            speechSafetyTimerRef.current = null;
-          }
-          if (currentId === speechRequestIdRef.current) setIsAvatarSpeaking(false);
-          finish(true);
-        };
-
-        utterance.onerror = () => {
-          if (speechSafetyTimerRef.current !== null) {
-            window.clearTimeout(speechSafetyTimerRef.current);
-            speechSafetyTimerRef.current = null;
-          }
-          if (currentId === speechRequestIdRef.current) setIsAvatarSpeaking(false);
-          finish(false);
-        };
-
-        speechSynthesisUtteranceRef.current = utterance;
-        synth.cancel();
-        synth.speak(utterance);
-
-        // Some browsers fail silently; confirm speaking actually started.
-        window.setTimeout(() => {
-          if (!settled && !synth.speaking) {
-            if (currentId === speechRequestIdRef.current) setIsAvatarSpeaking(false);
-            finish(false);
-          }
-        }, 800);
-
-        speechSafetyTimerRef.current = window.setTimeout(() => {
-          if (currentId === speechRequestIdRef.current) setIsAvatarSpeaking(false);
-        }, 20000);
-      } catch {
-        resolve(false);
-      }
-    });
-  };
 
   const playServerAudio = useCallback(async (base64: string, mimeType: string | null, currentId: number): Promise<boolean> => {
     if (!base64) return false;
@@ -493,17 +419,15 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
       const debug = speech.debug;
       setEveDebugLine(buildEveDebugLine(debug));
 
-      const played = speech.base64
-        ? await playServerAudio(speech.base64, speech.mimeType, currentId)
-        : false;
-
-      if (!played) {
-        const browserOk = await speakWithBrowserTts(text, currentId);
-        if (!browserOk) setIsAvatarSpeaking(false);
+      if (!speech.base64) {
+        setIsAvatarSpeaking(false);
+        return;
       }
+
+      const played = await playServerAudio(speech.base64, speech.mimeType, currentId);
+      if (!played) setIsAvatarSpeaking(false);
     } catch (e) {
-      const browserOk = await speakWithBrowserTts(text, currentId);
-      if (!browserOk) setIsAvatarSpeaking(false);
+      setIsAvatarSpeaking(false);
     }
   }, [playServerAudio, stopAllSpeech]);
 
@@ -558,14 +482,14 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
     }
   }, [showHistory, showTopicSelector, showProfileSetup]);
 
-  const handleAudioRecorded = async (base64: string, mimeType: string, _audioUrl: string, browserTranscript?: string) => {
-    if (!base64 && !browserTranscript) return;
+  const handleAudioRecorded = async (base64: string, mimeType: string, _audioUrl: string) => {
+    if (!base64) return;
     await ensureAudioContext();
     setStatus(AppStatus.PROCESSING_AUDIO);
     
     try {
       if (appMode === 'conversation') {
-        const response = await converseWithEve(base64, mimeType, chatHistory, browserTranscript);
+        const response = await converseWithEve(base64, mimeType, chatHistory);
         setEveDebugLine(buildEveDebugLine(response.debug));
 
         if (response.isSilent) {
@@ -580,7 +504,7 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
           setStatus(AppStatus.READY);
           return;
         }
-        const userTranscript = response.transcription || browserTranscript || '(No transcript)';
+        const userTranscript = response.transcription || '(No transcript)';
         setChatHistory(prev => [...prev, 
           { role: 'user', text: userTranscript },
           { role: 'model', text: response.response, translation: response.translation, feedback: response.feedback, improvement: response.improvement }
@@ -594,7 +518,7 @@ const AppContent: React.FC<{ currentUser: UserProfile; onLogout: () => void; onU
           throw new Error(`No phrase loaded for mode ${appMode || 'unknown'}`);
         }
 
-        const res = await evaluatePronunciation(base64, mimeType, currentPhrase.english, browserTranscript);
+        const res = await evaluatePronunciation(base64, mimeType, currentPhrase.english);
         setEveDebugLine(buildEveDebugLine(res.debug));
         setResult(res);
         registerProgressActivity({

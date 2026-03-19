@@ -2,7 +2,7 @@ import { ChatMessage, Phrase, PronunciationResult } from '../types';
 
 export interface EveDebugInfo {
   requestId: string;
-  transcriptSource: 'browser' | 'server' | 'none';
+  transcriptSource: 'server' | 'none';
   transcriptionModel: string | null;
   chatModel: string | null;
   ttsModel: string | null;
@@ -43,10 +43,7 @@ const extractErrorMessage = (error: any): string => String(error?.message || err
 
 const ensureDebugShape = (requestId: string, debug: any): EveDebugInfo => ({
   requestId: typeof debug?.requestId === 'string' ? debug.requestId : requestId,
-  transcriptSource:
-    debug?.transcriptSource === 'browser' || debug?.transcriptSource === 'server'
-      ? debug.transcriptSource
-      : 'none',
+  transcriptSource: debug?.transcriptSource === 'server' ? 'server' : 'none',
   transcriptionModel: typeof debug?.transcriptionModel === 'string' ? debug.transcriptionModel : null,
   chatModel: typeof debug?.chatModel === 'string' ? debug.chatModel : null,
   ttsModel: typeof debug?.ttsModel === 'string' ? debug.ttsModel : null,
@@ -131,8 +128,7 @@ const normalizePhraseList = (items: unknown, fallbackCategory: string): Phrase[]
 export const converseWithEve = async (
   audioBase64: string,
   mimeType: string,
-  history: ChatMessage[],
-  browserTranscript?: string
+  history: ChatMessage[]
 ): Promise<EveConversationResponse> => {
   const requestId = createClientRequestId();
 
@@ -142,7 +138,6 @@ export const converseWithEve = async (
       audioBase64,
       mimeType,
       history,
-      transcription: browserTranscript,
     });
 
     const debug = ensureDebugShape(requestId, raw?.debug);
@@ -162,7 +157,7 @@ export const converseWithEve = async (
     return {
       requestId,
       isSilent: false,
-      transcription: browserTranscript?.trim() || '',
+      transcription: '',
       response: 'Connection error. Please try again.',
       translation: 'Erro de conexao. Tente novamente.',
       debug: {
@@ -207,8 +202,7 @@ export const requestEveSpeech = async (text: string): Promise<EveSpeechResponse>
 export const evaluatePronunciation = async (
   audioBase64: string,
   mimeType: string,
-  targetPhrase: string,
-  browserTranscript?: string
+  targetPhrase: string
 ): Promise<EvePronunciationResponse> => {
   const requestId = createClientRequestId();
 
@@ -218,14 +212,13 @@ export const evaluatePronunciation = async (
       audioBase64,
       mimeType,
       targetPhrase,
-      transcription: browserTranscript,
     });
 
     const debug = ensureDebugShape(requestId, raw?.debug);
 
     return {
       requestId: typeof raw?.requestId === 'string' ? raw.requestId : requestId,
-      transcript: typeof raw?.transcript === 'string' ? raw.transcript : browserTranscript?.trim() || '',
+      transcript: typeof raw?.transcript === 'string' ? raw.transcript : '',
       isCorrect: Boolean(raw?.isCorrect),
       score: typeof raw?.score === 'number' ? Math.max(0, Math.min(100, raw.score)) : 0,
       feedback:
@@ -239,7 +232,7 @@ export const evaluatePronunciation = async (
   } catch (error: any) {
     return {
       requestId,
-      transcript: browserTranscript?.trim() || '',
+      transcript: '',
       isCorrect: false,
       score: 0,
       feedback: 'Erro ao processar audio.',

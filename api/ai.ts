@@ -6,7 +6,7 @@ type ChatHistoryItem = { role: 'user' | 'model'; text: string };
 
 type EveDebugInfo = {
   requestId: string;
-  transcriptSource: 'browser' | 'server' | 'none';
+  transcriptSource: 'server' | 'none';
   transcriptionModel: string | null;
   chatModel: string | null;
   ttsModel: string | null;
@@ -126,6 +126,7 @@ const transcriptionModels = uniqueModels([
   ...splitModels(process.env.OPENAI_STT_MODELS),
   process.env.OPENAI_TRANSCRIPTION_MODEL,
   'gpt-4o-mini-transcribe',
+  'gpt-4o-transcribe',
   'whisper-1',
 ]);
 
@@ -141,7 +142,7 @@ const ttsVoice = normalizeText(process.env.OPENAI_TTS_VOICE) || 'alloy';
 const disableServerTranscription = envFlag(process.env.DISABLE_SERVER_TRANSCRIPTION);
 const disableServerTts = envFlag(process.env.DISABLE_SERVER_TTS);
 const buildId = normalizeText(process.env.VERCEL_GIT_COMMIT_SHA).slice(0, 12) || 'local';
-const apiVersion = 'eve-api-2026-03-18-2210';
+const apiVersion = 'eve-api-2026-03-19-0025';
 const modelAccessBackoffMs = Math.max(0, Number(process.env.OPENAI_MODEL_ACCESS_BACKOFF_MS || 15000));
 const createModelAccessBackoff = (): ModelAccessBackoff => ({ until: 0, reason: '' });
 const readModelAccessBackoff = (state: ModelAccessBackoff, label: string): string | null => {
@@ -232,15 +233,8 @@ const resolveTranscript = async (
   openai: OpenAI | null,
   audioBase64Raw: unknown,
   mimeTypeRaw: unknown,
-  browserTranscriptRaw: unknown,
   debug: EveDebugInfo
 ): Promise<string> => {
-  const browserTranscript = normalizeText(browserTranscriptRaw);
-  if (browserTranscript) {
-    debug.transcriptSource = 'browser';
-    return browserTranscript;
-  }
-
   if (disableServerTranscription) {
     debug.warnings.push('server_transcription_disabled');
     return '';
@@ -372,7 +366,7 @@ const synthesizeSpeech = async (
       startModelAccessBackoff(ttsAccessBackoff, lastError);
       debug.warnings.push(`server_tts_backoff_started:${Math.max(1, Math.ceil(modelAccessBackoffMs / 1000))}s`);
     } else {
-      // Keep speech flow alive with browser TTS fallback instead of surfacing a hard error.
+      // Keep speech flow non-fatal so the screen remains usable even without audio playback.
       debug.warnings.push(`server_tts_unavailable:${lastError}`);
     }
   }
@@ -547,17 +541,10 @@ const handleEveConversation = async (openai: OpenAI | null, payload: AnyObject =
 
   logEve(requestId, 'conversation:start', {
     hasAudio: Boolean(normalizeText(payload.audioBase64)),
-    hasBrowserTranscript: Boolean(normalizeText(payload.transcription)),
     historyItems: history.length,
   });
 
-  const transcription = await resolveTranscript(
-    openai,
-    payload.audioBase64,
-    payload.mimeType,
-    payload.transcription,
-    debug
-  );
+  const transcription = await resolveTranscript(openai, payload.audioBase64, payload.mimeType, debug);
 
   if (!transcription) {
     if (debug.errors.length) {
@@ -635,8 +622,7 @@ const handleEveSpeech = async (openai: OpenAI | null, payload: AnyObject = {}) =
 
   const speech = await synthesizeSpeech(openai, text, debug);
 
-  // Speech action should always degrade gracefully to browser TTS on the client.
-  // Convert server-side TTS failures into warnings to avoid blocking the UX.
+  // Keep TTS flow non-fatal: the screen can continue even if server audio fails.
   if (!speech.base64 && debug.errors.length) {
     debug.warnings.push(...debug.errors.map(error => `speech_nonfatal:${error}`));
     debug.errors = [];
@@ -666,22 +652,14 @@ const handlePronunciation = async (openai: OpenAI | null, payload: AnyObject = {
   const requestId = normalizeText(payload.requestId) || buildRequestId('pron');
   const debug = createDebug(requestId);
   const targetPhrase = normalizeText(payload.targetPhrase);
-  const browserTranscript = normalizeText(payload.transcription);
   const hasAudio = Boolean(normalizeText(payload.audioBase64));
 
   logEve(requestId, 'pronunciation:start', {
     hasAudio,
-    hasBrowserTranscript: Boolean(browserTranscript),
     targetPhraseLength: targetPhrase.length,
   });
 
-  const transcript = await resolveTranscript(
-    openai,
-    payload.audioBase64,
-    payload.mimeType,
-    browserTranscript,
-    debug
-  );
+  const transcript = await resolveTranscript(openai, payload.audioBase64, payload.mimeType, debug);
 
   if (!transcript) {
     logEve(requestId, 'pronunciation:no_transcript', {
